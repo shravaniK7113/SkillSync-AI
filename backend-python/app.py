@@ -6,7 +6,7 @@ import datetime
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 
-print("🔥 NEW APP LOADED")
+print(" NEW APP LOADED")
 
 app = Flask(__name__)
 CORS(app)
@@ -20,12 +20,7 @@ db = mysql.connector.connect(
     database="skillsync"
 )
 
-# Load AI model once
 model = SentenceTransformer("all-MiniLM-L6-v2")
-
-# -----------------------------
-# HELPER FUNCTIONS FOR MATCHING
-# -----------------------------
 
 skill_map = {
     "ai": "artificial intelligence",
@@ -85,10 +80,6 @@ def final_match_score(skill_score, semantic_score, trust):
     )
     return float(round(score, 2))
 
-# -----------------------------
-# AUTH ROUTES
-# -----------------------------
-
 @app.route('/api/register', methods=['POST'])
 def register():
     data = request.json
@@ -139,10 +130,6 @@ def profile():
     except Exception:
         return jsonify({"message": "Unauthorized"}), 401
 
-# -----------------------------
-# MENTOR ROUTES
-# -----------------------------
-
 @app.route('/api/be-mentor', methods=['POST'])
 def be_mentor():
     data = request.json
@@ -182,10 +169,6 @@ def get_mentors():
     mentors = cursor.fetchall()
     return jsonify(mentors)
 
-# -----------------------------
-# REAL AI MATCHING ROUTE
-# -----------------------------
-
 @app.route('/api/match-mentors', methods=['POST'])
 def match_mentors():
     data = request.json
@@ -211,13 +194,10 @@ def match_mentors():
             (mentor.get("availability") or "")
         )
 
-        # Skill score
         skill_score = skill_match_score(learner_skills, mentor_skills)
 
-        # Semantic score
         semantic_score = semantic_similarity_score(learner_text, mentor_text)
 
-        # Updated trust score (with likes + sessions)
         trust = trust_score(
             avg_rating=float(mentor.get("avg_rating", 4.0)),
             review_count=int(mentor.get("review_count", 5)),
@@ -240,9 +220,6 @@ def match_mentors():
     matched.sort(key=lambda x: x["match_score"], reverse=True)
 
     return jsonify(matched)
-# -----------------------------
-# OTHER ROUTES
-# -----------------------------
 
 @app.route('/api/contact', methods=['POST'])
 def contact():
