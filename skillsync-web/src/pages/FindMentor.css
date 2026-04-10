@@ -417,3 +417,83 @@
   color: #111827;
   font-size: 20px;
 }
+
+/* 💙 CONNECT BUTTON */
+.connect-btn {
+  background: linear-gradient(135deg, #4f7cff, #2f46ff);
+  color: white;
+  border: none;
+  padding: 12px 22px;
+  border-radius: 30px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 6px 18px rgba(47, 70, 255, 0.25);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Hover effect */
+.connect-btn:hover {
+  transform: translateY(-2px) scale(1.05);
+  box-shadow: 0 10px 25px rgba(47, 70, 255, 0.35);
+}
+
+/* Click animation */
+.connect-btn:active {
+  transform: scale(0.95);
+}
+
+/* Optional: disabled state */
+.connect-btn:disabled {
+  background: #cbd5e1;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+
+.connect-btn:hover {
+  animation: pulse 0.6s ease;
+}
+
+.custom-toast {
+  position: fixed;
+  top: 90px;
+  right: 24px;
+  z-index: 9999;
+  min-width: 260px;
+  max-width: 340px;
+  padding: 14px 18px;
+  border-radius: 14px;
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+  animation: slideInToast 0.3s ease;
+}
+
+.custom-toast.success {
+  background: linear-gradient(135deg, #16a34a, #22c55e);
+}
+
+.custom-toast.error {
+  background: linear-gradient(135deg, #dc2626, #ef4444);
+}
+
+@keyframes slideInToast {
+  from {
+    opacity: 0;
+    transform: translateX(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}

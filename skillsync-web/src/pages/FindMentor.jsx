@@ -14,8 +14,25 @@ function FindMentor() {
   const [cardAction, setCardAction] = useState("");
   const [showMatchPopup, setShowMatchPopup] = useState(false);
   const [message, setMessage] = useState("");
+  const [requestedIds, setRequestedIds] = useState([]);
+  const [toast, setToast] = useState({ show: false, message: "", type: "" });
+
+  const user = JSON.parse(localStorage.getItem("user"));
+
+  const showToastMessage = (message, type = "success") => {
+    setToast({ show: true, message, type });
+
+    setTimeout(() => {
+      setToast({ show: false, message: "", type: "" });
+    }, 2500);
+  };
 
   const handleFindMentors = async () => {
+    if (!user) {
+      showToastMessage("Please login first", "error");
+      return;
+    }
+
     if (!skillsInput.trim()) {
       setMessage("Please enter at least one skill.");
       return;
@@ -25,6 +42,7 @@ function FindMentor() {
     setMessage("");
     setCurrentIndex(0);
     setLikedMentors([]);
+    setRequestedIds([]);
 
     try {
       const skillsArray = skillsInput
@@ -33,7 +51,7 @@ function FindMentor() {
         .filter((skill) => skill !== "");
 
       await axios.post("http://127.0.0.1:5000/api/save-learner-preferences", {
-        user_id: 1,
+        user_id: user.id,
         skills: skillsArray,
         goals: goals,
         availability: availability
@@ -70,23 +88,47 @@ function FindMentor() {
     goToNextCard();
   };
 
-  const handleInterested = () => {
+  const handleInterested = async () => {
+    if (!user) {
+      showToastMessage("Please login first", "error");
+      return;
+    }
+
     const currentMentor = mentors[currentIndex];
+
     if (currentMentor) {
-      const alreadyLiked = likedMentors.some((m) => m.id === currentMentor.id);
+      try {
+        await axios.post("http://127.0.0.1:5000/api/send-request", {
+          learner_id: user.id,
+          mentor_id: currentMentor.id
+        });
 
-      if (!alreadyLiked) {
-        setLikedMentors((prev) => [...prev, currentMentor]);
+        setRequestedIds((prev) => [...prev, currentMentor.id]);
+
+        const alreadyLiked = likedMentors.some((m) => m.id === currentMentor.id);
+
+        if (!alreadyLiked) {
+          setLikedMentors((prev) => [...prev, currentMentor]);
+        }
+
+        setShowMatchPopup(true);
+        setCardAction("swipe-right");
+        showToastMessage("Connection request sent successfully", "success");
+
+        setTimeout(() => {
+          setShowMatchPopup(false);
+        }, 1200);
+
+        goToNextCard();
+      } catch (error) {
+        console.error(error);
+
+        if (error.response?.data?.message) {
+          showToastMessage(error.response.data.message, "error");
+        } else {
+          showToastMessage("Error sending request", "error");
+        }
       }
-
-      setShowMatchPopup(true);
-      setCardAction("swipe-right");
-
-      setTimeout(() => {
-        setShowMatchPopup(false);
-      }, 1200);
-
-      goToNextCard();
     }
   };
 
@@ -95,6 +137,12 @@ function FindMentor() {
   return (
     <div>
       <Navbar />
+
+      {toast.show && (
+        <div className={`custom-toast ${toast.type}`}>
+          {toast.message}
+        </div>
+      )}
 
       <div className="match-page">
         <div className="match-container">
@@ -209,8 +257,13 @@ function FindMentor() {
                   <button className="circle-btn skip-btn" onClick={handleSkip}>
                     ✖
                   </button>
-                  <button className="circle-btn like-btn" onClick={handleInterested}>
-                    💙
+
+                  <button
+                    className="connect-btn"
+                    onClick={handleInterested}
+                    disabled={requestedIds.includes(currentMentor.id)}
+                  >
+                    {requestedIds.includes(currentMentor.id) ? "✔ Requested" : "💙 Connect"}
                   </button>
                 </div>
 
