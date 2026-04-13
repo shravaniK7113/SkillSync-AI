@@ -1,15 +1,17 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from flask_socketio import SocketIO, emit, join_room, leave_room
 import mysql.connector
 from mysql.connector import Error
 import jwt
 import datetime
 import bcrypt
 
-print("NEW APP LOADED")
+print("SKILLSYNC EXCHANGE BACKEND LOADED")
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "http://localhost:3000"}})
+socketio = SocketIO(app, cors_allowed_origins="http://localhost:3000")
 
 app.config["SECRET_KEY"] = "skillsync_super_secret_key_2026_secure_token"
 
@@ -32,77 +34,110 @@ def get_db_connection():
 
 
 # -----------------------------
-# TEST ROUTE
+# AUTH HELPER
 # -----------------------------
-@app.route("/", methods=["GET"])
-def home():
-    return jsonify({"message": "SkillSync backend is running"})
+def get_user_from_token():
+    auth_header = request.headers.get("Authorization")
+
+    if not auth_header:
+        return None, jsonify({"message": "Token missing"}), 401
+
+    try:
+        if auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+        else:
+            token = auth_header
+
+        data = jwt.decode(
+            token,
+            app.config["SECRET_KEY"],
+            algorithms=["HS256"]
+        )
+        return data["user_id"], None, None
+
+    except jwt.ExpiredSignatureError:
+        return None, jsonify({"message": "Token expired"}), 401
+    except jwt.InvalidTokenError:
+        return None, jsonify({"message": "Invalid token"}), 401
 
 
 # -----------------------------
-# HELPER FUNCTIONS FOR MATCHING
+# SKILL HELPERS
 # -----------------------------
 skill_map = {
     "ai": "artificial intelligence",
     "ml": "machine learning",
     "web dev": "web development",
     "frontend": "front end development",
-    "backend": "back end development"
+    "backend": "back end development",
+    "js": "javascript",
+    "py": "python"
 }
 
 def normalize_skill(skill):
     skill = skill.strip().lower()
     return skill_map.get(skill, skill)
 
-def normalize_skill_list(skills):
-    return [normalize_skill(s) for s in skills]
+def parse_skills(skills_text):
+    if not skills_text:
+        return []
+    return [
+        normalize_skill(skill)
+        for skill in skills_text.split(",")
+        if skill.strip()
+    ]
 
-def skill_match_score(learner_skills, mentor_skills):
-    learner_set = set(normalize_skill_list(learner_skills))
-    mentor_set = set(normalize_skill_list(mentor_skills))
+def calculate_match_score(my_have, my_want, other_have, other_want):
+    my_have_set = set(parse_skills(my_have))
+    my_want_set = set(parse_skills(my_want))
+    other_have_set = set(parse_skills(other_have))
+    other_want_set = set(parse_skills(other_want))
 
-    if not learner_set:
+    if not my_have_set and not my_want_set:
         return 0.0
 
-    common = learner_set.intersection(mentor_set)
-    score = (len(common) / len(learner_set)) * 100
-    return float(round(score, 2))
+    want_match = len(my_want_set.intersection(other_have_set))
+    give_match = len(my_have_set.intersection(other_want_set))
 
-def semantic_similarity_score(learner_text, mentor_text):
-    learner_words = set(learner_text.lower().split())
-    mentor_words = set(mentor_text.lower().split())
+    total_expected = len(my_want_set) + len(other_want_set)
+    total_found = want_match + give_match
 
-    if not learner_words:
+    if total_expected == 0:
         return 0.0
 
-    common = learner_words.intersection(mentor_words)
-    score = (len(common) / len(learner_words)) * 100
-    return float(round(score, 2))
+    return round((total_found / total_expected) * 100, 2)
 
-def trust_score(avg_rating, review_count, response_rate, completion_rate, likes=0, total_sessions=0):
-    rating_score = (avg_rating / 5) * 100
-    review_score = min(review_count * 10, 100)
-    engagement_score = min(total_sessions * 2, 100)
-    likes_score = min(likes * 5, 100)
 
-    score = (
-        0.30 * rating_score +
-        0.20 * review_score +
-        0.15 * response_rate +
-        0.15 * completion_rate +
-        0.10 * engagement_score +
-        0.10 * likes_score
-    )
+# -----------------------------
+# MATCH / CHAT HELPERS
+# -----------------------------
+def are_users_matched(db, user_a, user_b):
+    cursor = None
+    try:
+        user1_id = min(int(user_a), int(user_b))
+        user2_id = max(int(user_a), int(user_b))
 
-    return float(round(score, 2))
+        cursor = db.cursor(dictionary=True, buffered=True)
+        cursor.execute(
+            """
+            SELECT id FROM matches
+            WHERE user1_id = %s AND user2_id = %s
+            """,
+            (user1_id, user2_id)
+        )
+        match = cursor.fetchone()
+        return match is not None
+    finally:
+        if cursor:
+            cursor.close()
 
-def final_match_score(skill_score, semantic_score, trust):
-    score = (
-        0.50 * skill_score +
-        0.30 * semantic_score +
-        0.20 * trust
-    )
-    return float(round(score, 2))
+
+# -----------------------------
+# TEST ROUTE
+# -----------------------------
+@app.route("/", methods=["GET"])
+def home():
+    return jsonify({"message": "SkillSync skill exchange backend is running"})
 
 
 # -----------------------------
@@ -115,23 +150,26 @@ def register():
     try:
         db = get_db_connection()
         if not db:
-            return jsonify({"message": "Register failed", "error": "MySQL Connection not available"}), 500
+            return jsonify({"message": "Register failed", "error": "MySQL connection not available"}), 500
 
         data = request.get_json()
 
         if not data:
             return jsonify({"message": "No data received"}), 400
 
-        name = data.get("name")
-        email = data.get("email")
-        password = data.get("password")
+        name = data.get("name", "").strip()
+        email = data.get("email", "").strip().lower()
+        password = data.get("password", "").strip()
+        bio = data.get("bio", "").strip()
+        skills_have = data.get("skills_have", "").strip()
+        skills_want = data.get("skills_want", "").strip()
         role = "user"
 
         if not name or not email or not password:
             return jsonify({"message": "Name, email and password are required"}), 400
 
         cursor = db.cursor(dictionary=True, buffered=True)
-        cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
+        cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
         existing_user = cursor.fetchone()
         cursor.close()
         cursor = None
@@ -139,12 +177,18 @@ def register():
         if existing_user:
             return jsonify({"message": "User already exists"}), 400
 
-        hashed_password = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+        hashed_password = bcrypt.hashpw(
+            password.encode("utf-8"),
+            bcrypt.gensalt()
+        ).decode("utf-8")
 
         cursor = db.cursor()
         cursor.execute(
-            "INSERT INTO users (name, email, password, role) VALUES (%s, %s, %s, %s)",
-            (name, email, hashed_password, role)
+            """
+            INSERT INTO users (name, email, password, role, bio, skills_have, skills_want)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """,
+            (name, email, hashed_password, role, bio, skills_have, skills_want)
         )
         db.commit()
 
@@ -168,15 +212,15 @@ def login():
     try:
         db = get_db_connection()
         if not db:
-            return jsonify({"message": "Login failed", "error": "MySQL Connection not available"}), 500
+            return jsonify({"message": "Login failed", "error": "MySQL connection not available"}), 500
 
         data = request.get_json()
 
         if not data:
             return jsonify({"message": "No data received"}), 400
 
-        email = data.get("email")
-        password = data.get("password")
+        email = data.get("email", "").strip().lower()
+        password = data.get("password", "").strip()
 
         if not email or not password:
             return jsonify({"message": "Email and password are required"}), 400
@@ -200,7 +244,7 @@ def login():
         token = jwt.encode(
             {
                 "user_id": user["id"],
-                "exp": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=2)
+                "exp": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=12)
             },
             app.config["SECRET_KEY"],
             algorithm="HS256"
@@ -219,35 +263,29 @@ def login():
             db.close()
 
 
+# -----------------------------
+# PROFILE ROUTES
+# -----------------------------
 @app.route("/api/profile", methods=["GET"])
 def profile():
     db = None
     cursor = None
     try:
+        user_id, error_response, status_code = get_user_from_token()
+        if error_response:
+            return error_response, status_code
+
         db = get_db_connection()
         if not db:
-            return jsonify({"message": "Profile fetch failed", "error": "MySQL Connection not available"}), 500
-
-        auth_header = request.headers.get("Authorization")
-
-        if not auth_header:
-            return jsonify({"message": "Token missing"}), 401
-
-        if auth_header.startswith("Bearer "):
-            token = auth_header.split(" ")[1]
-        else:
-            token = auth_header
-
-        data = jwt.decode(
-            token,
-            app.config["SECRET_KEY"],
-            algorithms=["HS256"]
-        )
-        user_id = data["user_id"]
+            return jsonify({"message": "Profile fetch failed", "error": "MySQL connection not available"}), 500
 
         cursor = db.cursor(dictionary=True, buffered=True)
         cursor.execute(
-            "SELECT id, name, email, role FROM users WHERE id = %s",
+            """
+            SELECT id, name, email, role, bio, skills_have, skills_want
+            FROM users
+            WHERE id = %s
+            """,
             (user_id,)
         )
         user = cursor.fetchone()
@@ -257,10 +295,6 @@ def profile():
 
         return jsonify({"user": user})
 
-    except jwt.ExpiredSignatureError:
-        return jsonify({"message": "Token expired"}), 401
-    except jwt.InvalidTokenError:
-        return jsonify({"message": "Invalid token"}), 401
     except Exception as e:
         print("PROFILE ERROR:", str(e))
         return jsonify({"message": "Profile fetch failed", "error": str(e)}), 500
@@ -272,110 +306,245 @@ def profile():
             db.close()
 
 
-# -----------------------------
-# MENTOR ROUTES
-# -----------------------------
-@app.route("/api/be-mentor", methods=["POST"])
-def be_mentor():
+@app.route("/api/users/update-profile", methods=["PUT"])
+def update_profile():
     db = None
     cursor = None
     try:
+        user_id, error_response, status_code = get_user_from_token()
+        if error_response:
+            return error_response, status_code
+
         db = get_db_connection()
         if not db:
-            return jsonify({"message": "Failed to create mentor profile", "error": "MySQL Connection not available"}), 500
+            return jsonify({"message": "Profile update failed", "error": "MySQL connection not available"}), 500
 
         data = request.get_json()
-        user_id = data.get("user_id")
 
-        cursor = db.cursor(dictionary=True, buffered=True)
-        cursor.execute("SELECT * FROM mentors WHERE user_id = %s", (user_id,))
-        existing_mentor = cursor.fetchone()
-        cursor.close()
-        cursor = None
+        name = data.get("name", "").strip()
+        bio = data.get("bio", "").strip()
+        skills_have = data.get("skills_have", "").strip()
+        skills_want = data.get("skills_want", "").strip()
 
-        if existing_mentor:
-            return jsonify({"message": "User is already a mentor"}), 400
+        if not name:
+            return jsonify({"message": "Name is required"}), 400
 
         cursor = db.cursor()
-        cursor.execute("""
-            INSERT INTO mentors (user_id, name, email, skills, experience, bio, availability, contact)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-        """, (
-            data["user_id"],
-            data["name"],
-            data["email"],
-            data["skills"],
-            data["experience"],
-            data["bio"],
-            data["availability"],
-            data["contact"]
-        ))
-
-        cursor.execute("""
+        cursor.execute(
+            """
             UPDATE users
-            SET role = 'mentor'
+            SET name = %s, bio = %s, skills_have = %s, skills_want = %s
             WHERE id = %s
-        """, (data["user_id"],))
+            """,
+            (name, bio, skills_have, skills_want, user_id)
+        )
+        db.commit()
+
+        return jsonify({"message": "Profile updated successfully"})
+
+    except Exception as e:
+        print("UPDATE PROFILE ERROR:", str(e))
+        return jsonify({"message": "Profile update failed", "error": str(e)}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if db and db.is_connected():
+            db.close()
+
+
+# -----------------------------
+# DISCOVER USERS ROUTE
+# -----------------------------
+@app.route("/api/users/discover", methods=["GET"])
+def discover_users():
+    db = None
+    cursor = None
+    try:
+        user_id, error_response, status_code = get_user_from_token()
+        if error_response:
+            return error_response, status_code
+
+        db = get_db_connection()
+        if not db:
+            return jsonify({"message": "Failed to discover users", "error": "MySQL connection not available"}), 500
+
+        cursor = db.cursor(dictionary=True, buffered=True)
+
+        cursor.execute(
+            """
+            SELECT id, name, email, bio, skills_have, skills_want
+            FROM users
+            WHERE id = %s
+            """,
+            (user_id,)
+        )
+        current_user = cursor.fetchone()
+
+        if not current_user:
+            return jsonify({"message": "Current user not found"}), 404
+
+        cursor.execute(
+            """
+            SELECT id, name, email, bio, skills_have, skills_want
+            FROM users
+            WHERE id != %s
+            AND id NOT IN (
+                SELECT to_user_id FROM swipes WHERE from_user_id = %s
+            )
+            """,
+            (user_id, user_id)
+        )
+        users = cursor.fetchall()
+
+        result = []
+        for other_user in users:
+            match_score = calculate_match_score(
+                current_user.get("skills_have", ""),
+                current_user.get("skills_want", ""),
+                other_user.get("skills_have", ""),
+                other_user.get("skills_want", "")
+            )
+            other_user["match_score"] = match_score
+            result.append(other_user)
+
+        result.sort(key=lambda x: x["match_score"], reverse=True)
+
+        return jsonify(result)
+
+    except Exception as e:
+        print("DISCOVER USERS ERROR:", str(e))
+        return jsonify({"message": "Failed to discover users", "error": str(e)}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if db and db.is_connected():
+            db.close()
+
+
+# -----------------------------
+# SWIPE ROUTE
+# -----------------------------
+@app.route("/api/swipe", methods=["POST"])
+def swipe_user():
+    db = None
+    cursor = None
+    try:
+        user_id, error_response, status_code = get_user_from_token()
+        if error_response:
+            return error_response, status_code
+
+        db = get_db_connection()
+        if not db:
+            return jsonify({"message": "Swipe failed", "error": "MySQL connection not available"}), 500
+
+        data = request.get_json()
+        to_user_id = data.get("to_user_id")
+        action = data.get("action")
+
+        if not to_user_id or action not in ["like", "pass"]:
+            return jsonify({"message": "Invalid swipe data"}), 400
+
+        if int(to_user_id) == int(user_id):
+            return jsonify({"message": "You cannot swipe on yourself"}), 400
+
+        cursor = db.cursor(dictionary=True, buffered=True)
+        cursor.execute(
+            """
+            SELECT id FROM swipes
+            WHERE from_user_id = %s AND to_user_id = %s
+            """,
+            (user_id, to_user_id)
+        )
+        existing_swipe = cursor.fetchone()
+
+        if existing_swipe:
+            cursor.close()
+            cursor = None
+            cursor = db.cursor()
+            cursor.execute(
+                """
+                UPDATE swipes
+                SET action = %s
+                WHERE from_user_id = %s AND to_user_id = %s
+                """,
+                (action, user_id, to_user_id)
+            )
+        else:
+            cursor.close()
+            cursor = None
+            cursor = db.cursor()
+            cursor.execute(
+                """
+                INSERT INTO swipes (from_user_id, to_user_id, action)
+                VALUES (%s, %s, %s)
+                """,
+                (user_id, to_user_id, action)
+            )
 
         db.commit()
 
-        return jsonify({"message": "Mentor profile created successfully"}), 201
-
-    except Exception as e:
-        print("BE MENTOR ERROR:", str(e))
-        return jsonify({"message": "Failed to create mentor profile", "error": str(e)}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if db and db.is_connected():
-            db.close()
-
-
-@app.route("/api/find-mentor", methods=["GET"])
-def find_mentor():
-    db = None
-    cursor = None
-    try:
-        db = get_db_connection()
-        if not db:
-            return jsonify({"message": "Failed to find mentors", "error": "MySQL Connection not available"}), 500
-
-        skill = request.args.get("skill", "")
-        cursor = db.cursor(dictionary=True, buffered=True)
-        cursor.execute("SELECT * FROM mentors WHERE skills LIKE %s", ('%' + skill + '%',))
-        mentors = cursor.fetchall()
-
-        return jsonify(mentors)
-
-    except Exception as e:
-        print("FIND MENTOR ERROR:", str(e))
-        return jsonify({"message": "Failed to find mentors", "error": str(e)}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if db and db.is_connected():
-            db.close()
-
-
-@app.route("/api/mentors", methods=["GET"])
-def get_mentors():
-    db = None
-    cursor = None
-    try:
-        db = get_db_connection()
-        if not db:
-            return jsonify({"message": "Failed to get mentors", "error": "MySQL Connection not available"}), 500
+        if action == "pass":
+            return jsonify({
+                "matched": False,
+                "message": "User skipped"
+            })
 
         cursor = db.cursor(dictionary=True, buffered=True)
-        cursor.execute("SELECT * FROM mentors")
-        mentors = cursor.fetchall()
-        return jsonify(mentors)
+        cursor.execute(
+            """
+            SELECT id FROM swipes
+            WHERE from_user_id = %s
+            AND to_user_id = %s
+            AND action = 'like'
+            """,
+            (to_user_id, user_id)
+        )
+        reverse_like = cursor.fetchone()
+
+        if reverse_like:
+            user1_id = min(int(user_id), int(to_user_id))
+            user2_id = max(int(user_id), int(to_user_id))
+
+            cursor.close()
+            cursor = None
+            cursor = db.cursor(dictionary=True, buffered=True)
+            cursor.execute(
+                """
+                SELECT id FROM matches
+                WHERE user1_id = %s AND user2_id = %s
+                """,
+                (user1_id, user2_id)
+            )
+            existing_match = cursor.fetchone()
+
+            if not existing_match:
+                cursor.close()
+                cursor = None
+                cursor = db.cursor()
+                cursor.execute(
+                    """
+                    INSERT INTO matches (user1_id, user2_id)
+                    VALUES (%s, %s)
+                    """,
+                    (user1_id, user2_id)
+                )
+                db.commit()
+
+            return jsonify({
+                "matched": True,
+                "message": "It's a match!"
+            })
+
+        return jsonify({
+            "matched": False,
+            "message": "Interest saved"
+        })
 
     except Exception as e:
-        print("GET MENTORS ERROR:", str(e))
-        return jsonify({"message": "Failed to get mentors", "error": str(e)}), 500
+        print("SWIPE ERROR:", str(e))
+        return jsonify({"message": "Swipe failed", "error": str(e)}), 500
 
     finally:
         if cursor:
@@ -384,31 +553,162 @@ def get_mentors():
             db.close()
 
 
-@app.route("/api/like-mentor", methods=["POST"])
-def like_mentor():
+# -----------------------------
+# MATCHES ROUTE
+# -----------------------------
+@app.route("/api/matches", methods=["GET"])
+def get_matches():
     db = None
     cursor = None
     try:
+        user_id, error_response, status_code = get_user_from_token()
+        if error_response:
+            return error_response, status_code
+
         db = get_db_connection()
         if not db:
-            return jsonify({"message": "Failed to like mentor", "error": "MySQL Connection not available"}), 500
+            return jsonify({"message": "Failed to fetch matches", "error": "MySQL connection not available"}), 500
+
+        cursor = db.cursor(dictionary=True, buffered=True)
+
+        cursor.execute(
+            """
+            SELECT 
+                u.id,
+                u.name,
+                u.email,
+                u.bio,
+                u.skills_have,
+                u.skills_want,
+                (
+                    SELECT COUNT(*)
+                    FROM messages msg
+                    WHERE msg.sender_id = u.id
+                      AND msg.receiver_id = %s
+                      AND msg.is_read = FALSE
+                ) AS unread_count
+            FROM matches m
+            JOIN users u
+              ON u.id = CASE
+                  WHEN m.user1_id = %s THEN m.user2_id
+                  ELSE m.user1_id
+              END
+            WHERE m.user1_id = %s OR m.user2_id = %s
+            ORDER BY u.name
+            """,
+            (user_id, user_id, user_id, user_id)
+        )
+
+        matches = cursor.fetchall()
+        return jsonify(matches)
+
+    except Exception as e:
+        print("GET MATCHES ERROR:", str(e))
+        return jsonify({"message": "Failed to fetch matches", "error": str(e)}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if db and db.is_connected():
+            db.close()
+
+
+# -----------------------------
+# CHAT ROUTES
+# -----------------------------
+@app.route("/api/messages/<int:other_user_id>", methods=["GET"])
+def get_messages(other_user_id):
+    db = None
+    cursor = None
+    try:
+        user_id, error_response, status_code = get_user_from_token()
+        if error_response:
+            return error_response, status_code
+
+        db = get_db_connection()
+        if not db:
+            return jsonify({"message": "Failed to fetch messages", "error": "MySQL connection not available"}), 500
+
+        if not are_users_matched(db, user_id, other_user_id):
+            return jsonify({"message": "Chat allowed only for matched users"}), 403
+
+        cursor = db.cursor(dictionary=True, buffered=True)
+        cursor.execute(
+            """
+            SELECT id, sender_id, receiver_id, message_text, created_at
+            FROM messages
+            WHERE (sender_id = %s AND receiver_id = %s)
+               OR (sender_id = %s AND receiver_id = %s)
+            ORDER BY created_at ASC
+            """,
+            (user_id, other_user_id, other_user_id, user_id)
+        )
+        messages = cursor.fetchall()
+
+        cursor.execute(
+            """
+            UPDATE messages
+            SET is_read = TRUE
+            WHERE sender_id = %s AND receiver_id = %s
+            """,
+            (other_user_id, user_id)
+        )
+        db.commit()
+
+        return jsonify(messages)
+
+    except Exception as e:
+        print("GET MESSAGES ERROR:", str(e))
+        return jsonify({"message": "Failed to fetch messages", "error": str(e)}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+        if db and db.is_connected():
+            db.close()
+
+
+@app.route("/api/messages", methods=["POST"])
+def send_message():
+    db = None
+    cursor = None
+    try:
+        user_id, error_response, status_code = get_user_from_token()
+        if error_response:
+            return error_response, status_code
+
+        db = get_db_connection()
+        if not db:
+            return jsonify({"message": "Failed to send message", "error": "MySQL connection not available"}), 500
 
         data = request.get_json()
-        mentor_id = data.get("mentor_id")
+        receiver_id = data.get("receiver_id")
+        message_text = data.get("message_text", "").strip()
+
+        if not receiver_id or not message_text:
+            return jsonify({"message": "receiver_id and message_text are required"}), 400
+
+        if int(receiver_id) == int(user_id):
+            return jsonify({"message": "You cannot send a message to yourself"}), 400
+
+        if not are_users_matched(db, user_id, receiver_id):
+            return jsonify({"message": "Chat allowed only for matched users"}), 403
 
         cursor = db.cursor()
-        cursor.execute("""
-            UPDATE mentors
-            SET likes = likes + 1
-            WHERE id = %s
-        """, (mentor_id,))
+        cursor.execute(
+            """
+            INSERT INTO messages (sender_id, receiver_id, message_text)
+            VALUES (%s, %s, %s)
+            """,
+            (user_id, receiver_id, message_text)
+        )
         db.commit()
 
-        return jsonify({"message": "Mentor liked successfully"})
+        return jsonify({"message": "Message sent successfully"}), 201
 
     except Exception as e:
-        print("LIKE MENTOR ERROR:", str(e))
-        return jsonify({"message": "Failed to like mentor", "error": str(e)}), 500
+        print("SEND MESSAGE ERROR:", str(e))
+        return jsonify({"message": "Failed to send message", "error": str(e)}), 500
 
     finally:
         if cursor:
@@ -418,77 +718,7 @@ def like_mentor():
 
 
 # -----------------------------
-# MATCHING ROUTE
-# -----------------------------
-@app.route("/api/match-mentors", methods=["POST"])
-def match_mentors():
-    db = None
-    cursor = None
-    try:
-        db = get_db_connection()
-        if not db:
-            return jsonify({"message": "Failed to match mentors", "error": "MySQL Connection not available"}), 500
-
-        data = request.get_json()
-
-        learner_skills = data.get("skills", [])
-        learner_goals = data.get("goals", "")
-        learner_availability = data.get("availability", "")
-
-        cursor = db.cursor(dictionary=True, buffered=True)
-        cursor.execute("SELECT * FROM mentors")
-        mentors = cursor.fetchall()
-
-        matched = []
-        learner_text = " ".join(learner_skills) + " " + learner_goals + " " + learner_availability
-
-        for mentor in mentors:
-            mentor_skills = mentor["skills"].split(",") if mentor.get("skills") else []
-
-            mentor_text = (
-                (mentor.get("skills") or "") + " " +
-                (mentor.get("bio") or "") + " " +
-                (mentor.get("availability") or "")
-            )
-
-            skill_score = skill_match_score(learner_skills, mentor_skills)
-            semantic_score = semantic_similarity_score(learner_text, mentor_text)
-
-            trust = trust_score(
-                avg_rating=float(mentor.get("avg_rating", 4.0)),
-                review_count=int(mentor.get("review_count", 5)),
-                response_rate=float(mentor.get("response_rate", 80)),
-                completion_rate=float(mentor.get("completion_rate", 85)),
-                likes=int(mentor.get("likes", 0)),
-                total_sessions=int(mentor.get("total_sessions", 0))
-            )
-
-            match_score = final_match_score(skill_score, semantic_score, trust)
-
-            mentor["skill_score"] = float(skill_score)
-            mentor["semantic_score"] = float(semantic_score)
-            mentor["trust_score"] = float(trust)
-            mentor["match_score"] = float(match_score)
-
-            matched.append(mentor)
-
-        matched.sort(key=lambda x: x["match_score"], reverse=True)
-
-        return jsonify(matched)
-
-    except Exception as e:
-        print("MATCH MENTORS ERROR:", str(e))
-        return jsonify({"message": "Failed to match mentors", "error": str(e)}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if db and db.is_connected():
-            db.close()
-
-
-# -----------------------------
-# OTHER ROUTES
+# CONTACT ROUTE
 # -----------------------------
 @app.route("/api/contact", methods=["POST"])
 def contact():
@@ -497,20 +727,23 @@ def contact():
     try:
         db = get_db_connection()
         if not db:
-            return jsonify({"message": "Failed to send contact message", "error": "MySQL Connection not available"}), 500
+            return jsonify({"message": "Failed to send contact message", "error": "MySQL connection not available"}), 500
 
         data = request.get_json()
         cursor = db.cursor()
 
-        cursor.execute("""
+        cursor.execute(
+            """
             INSERT INTO contact_messages (name, email, subject, message)
             VALUES (%s, %s, %s, %s)
-        """, (
-            data["name"],
-            data["email"],
-            data["subject"],
-            data["message"]
-        ))
+            """,
+            (
+                data["name"],
+                data["email"],
+                data["subject"],
+                data["message"]
+            )
+        )
         db.commit()
 
         return jsonify({"message": "Message sent successfully"})
@@ -526,6 +759,9 @@ def contact():
             db.close()
 
 
+# -----------------------------
+# TEAM ROUTE
+# -----------------------------
 @app.route("/api/team", methods=["GET"])
 def team():
     db = None
@@ -533,7 +769,7 @@ def team():
     try:
         db = get_db_connection()
         if not db:
-            return jsonify({"message": "Failed to fetch team members", "error": "MySQL Connection not available"}), 500
+            return jsonify({"message": "Failed to fetch team members", "error": "MySQL connection not available"}), 500
 
         cursor = db.cursor(dictionary=True, buffered=True)
         cursor.execute("SELECT * FROM team_members")
@@ -551,36 +787,39 @@ def team():
             db.close()
 
 
-@app.route("/api/save-learner-preferences", methods=["POST"])
-def save_learner_preferences():
+@app.route("/api/unread-count", methods=["GET"])
+def get_unread_count():
     db = None
     cursor = None
     try:
+        user_id, error_response, status_code = get_user_from_token()
+        if error_response:
+            return error_response, status_code
+
         db = get_db_connection()
         if not db:
-            return jsonify({"message": "Failed to save learner preferences", "error": "MySQL Connection not available"}), 500
+            return jsonify({"message": "Failed", "error": "DB error"}), 500
 
-        data = request.get_json()
-        cursor = db.cursor()
+        cursor = db.cursor(dictionary=True)
 
-        skills_text = ", ".join(data.get("skills", []))
+        cursor.execute(
+            """
+            SELECT COUNT(*) AS total_unread
+            FROM messages
+            WHERE receiver_id = %s AND is_read = FALSE
+            """,
+            (user_id,)
+        )
 
-        cursor.execute("""
-            INSERT INTO learner_preferences (user_id, learning_skills, goals, preferred_availability)
-            VALUES (%s, %s, %s, %s)
-        """, (
-            data.get("user_id"),
-            skills_text,
-            data.get("goals", ""),
-            data.get("availability", "")
-        ))
-        db.commit()
+        result = cursor.fetchone()
 
-        return jsonify({"message": "Learner preferences saved successfully"})
+        return jsonify({
+            "unread": result["total_unread"]
+        })
 
     except Exception as e:
-        print("SAVE LEARNER PREFERENCES ERROR:", str(e))
-        return jsonify({"message": "Failed to save learner preferences", "error": str(e)}), 500
+        print("UNREAD COUNT ERROR:", str(e))
+        return jsonify({"message": "Error", "error": str(e)}), 500
 
     finally:
         if cursor:
@@ -590,195 +829,82 @@ def save_learner_preferences():
 
 
 # -----------------------------
-# CONNECTION REQUEST SYSTEM
+# VIDEO CALL SOCKET EVENTS
 # -----------------------------
-@app.route("/api/send-request", methods=["POST"])
-def send_request():
-    db = None
-    cursor = None
-    try:
-        db = get_db_connection()
-        if not db:
-            return jsonify({"message": "Failed to send request", "error": "MySQL Connection not available"}), 500
+@socketio.on("join-call")
+def handle_join_call(data):
+    room = data.get("room")
+    user_name = data.get("user_name", "User")
 
-        data = request.get_json()
-        learner_id = data.get("learner_id")
-        mentor_id = data.get("mentor_id")
+    if not room:
+        return
 
-        cursor = db.cursor(dictionary=True, buffered=True)
-        cursor.execute("""
-            SELECT * FROM connection_requests
-            WHERE learner_id = %s AND mentor_id = %s
-        """, (learner_id, mentor_id))
-        existing = cursor.fetchone()
-        cursor.close()
-        cursor = None
-
-        if existing:
-            return jsonify({"message": "Request already sent"}), 400
-
-        cursor = db.cursor()
-        cursor.execute("""
-            INSERT INTO connection_requests (learner_id, mentor_id, status)
-            VALUES (%s, %s, %s)
-        """, (learner_id, mentor_id, "pending"))
-        db.commit()
-
-        return jsonify({"message": "Connection request sent successfully"})
-
-    except Exception as e:
-        print("SEND REQUEST ERROR:", str(e))
-        return jsonify({"message": "Failed to send request", "error": str(e)}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if db and db.is_connected():
-            db.close()
+    join_room(room)
+    emit("user-joined", {"user_name": user_name}, room=room, include_self=False)
 
 
-@app.route("/api/mentor-requests/<int:user_id>", methods=["GET"])
-def mentor_requests(user_id):
-    db = None
-    cursor = None
-    try:
-        db = get_db_connection()
-        if not db:
-            return jsonify({"message": "Failed to fetch mentor requests", "error": "MySQL Connection not available"}), 500
+@socketio.on("incoming-call")
+def handle_incoming_call(data):
+    room = data.get("room")
+    caller_name = data.get("caller_name", "User")
+    offer = data.get("offer")
 
-        cursor = db.cursor(dictionary=True, buffered=True)
-        cursor.execute("SELECT id FROM mentors WHERE user_id = %s", (user_id,))
-        mentor = cursor.fetchone()
-        cursor.close()
-        cursor = None
+    if not room:
+        return
 
-        if not mentor:
-            return jsonify({"message": "Mentor profile not found"}), 404
-
-        mentor_id = mentor["id"]
-
-        cursor = db.cursor(dictionary=True, buffered=True)
-        cursor.execute("""
-            SELECT cr.id, cr.learner_id, cr.mentor_id, cr.status, cr.created_at,
-                   u.name AS learner_name, u.email AS learner_email
-            FROM connection_requests cr
-            JOIN users u ON cr.learner_id = u.id
-            WHERE cr.mentor_id = %s
-            ORDER BY cr.created_at DESC
-        """, (mentor_id,))
-
-        requests = cursor.fetchall()
-        return jsonify(requests)
-
-    except Exception as e:
-        print("MENTOR REQUESTS ERROR:", str(e))
-        return jsonify({"message": "Failed to fetch mentor requests", "error": str(e)}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if db and db.is_connected():
-            db.close()
+    emit(
+        "incoming-call",
+        {
+            "caller_name": caller_name,
+            "offer": offer,
+        },
+        room=room,
+        include_self=False
+    )
 
 
-@app.route("/api/update-request-status", methods=["POST"])
-def update_request_status():
-    db = None
-    cursor = None
-    try:
-        db = get_db_connection()
-        if not db:
-            return jsonify({"message": "Failed to update request status", "error": "MySQL Connection not available"}), 500
+@socketio.on("accept-call")
+def handle_accept_call(data):
+    room = data.get("room")
+    answer = data.get("answer")
 
-        data = request.get_json()
-        request_id = data.get("request_id")
-        status = data.get("status")
+    if not room:
+        return
 
-        if status not in ["accepted", "rejected"]:
-            return jsonify({"message": "Invalid status"}), 400
-
-        cursor = db.cursor()
-        cursor.execute("""
-            UPDATE connection_requests
-            SET status = %s
-            WHERE id = %s
-        """, (status, request_id))
-        db.commit()
-
-        return jsonify({"message": f"Request {status} successfully"})
-
-    except Exception as e:
-        print("UPDATE REQUEST STATUS ERROR:", str(e))
-        return jsonify({"message": "Failed to update request status", "error": str(e)}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if db and db.is_connected():
-            db.close()
+    emit("call-accepted", {"answer": answer}, room=room, include_self=False)
 
 
-@app.route("/api/my-mentor-profile/<int:user_id>", methods=["GET"])
-def my_mentor_profile(user_id):
-    db = None
-    cursor = None
-    try:
-        db = get_db_connection()
-        if not db:
-            return jsonify({"message": "Failed to fetch mentor profile", "error": "MySQL Connection not available"}), 500
+@socketio.on("reject-call")
+def handle_reject_call(data):
+    room = data.get("room")
+    user_name = data.get("user_name", "User")
 
-        cursor = db.cursor(dictionary=True, buffered=True)
-        cursor.execute("SELECT * FROM mentors WHERE user_id = %s", (user_id,))
-        mentor = cursor.fetchone()
+    if not room:
+        return
 
-        if not mentor:
-            return jsonify({"isMentor": False, "mentor": None})
-
-        return jsonify({"isMentor": True, "mentor": mentor})
-
-    except Exception as e:
-        print("MY MENTOR PROFILE ERROR:", str(e))
-        return jsonify({"message": "Failed to fetch mentor profile", "error": str(e)}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if db and db.is_connected():
-            db.close()
+    emit("call-rejected", {"user_name": user_name}, room=room, include_self=False)
 
 
-@app.route("/api/learner-requests/<int:learner_id>", methods=["GET"])
-def learner_requests(learner_id):
-    db = None
-    cursor = None
-    try:
-        db = get_db_connection()
-        if not db:
-            return jsonify({"message": "Failed to fetch learner requests", "error": "MySQL Connection not available"}), 500
+@socketio.on("ice-candidate")
+def handle_ice_candidate(data):
+    room = data.get("room")
+    candidate = data.get("candidate")
 
-        cursor = db.cursor(dictionary=True, buffered=True)
-        cursor.execute("""
-            SELECT cr.id, cr.learner_id, cr.mentor_id, cr.status, cr.created_at,
-                   m.name AS mentor_name, m.email AS mentor_email, m.skills
-            FROM connection_requests cr
-            JOIN mentors m ON cr.mentor_id = m.id
-            WHERE cr.learner_id = %s
-            ORDER BY cr.created_at DESC
-        """, (learner_id,))
+    if not room:
+        return
 
-        requests = cursor.fetchall()
-        return jsonify(requests)
-
-    except Exception as e:
-        print("LEARNER REQUESTS ERROR:", str(e))
-        return jsonify({"message": "Failed to fetch learner requests", "error": str(e)}), 500
-
-    finally:
-        if cursor:
-            cursor.close()
-        if db and db.is_connected():
-            db.close()
+    emit("ice-candidate", {"candidate": candidate}, room=room, include_self=False)
 
 
+@socketio.on("leave-call")
+def handle_leave_call(data):
+    room = data.get("room")
+    user_name = data.get("user_name", "User")
+
+    if not room:
+        return
+
+    leave_room(room)
+    emit("user-left", {"user_name": user_name}, room=room, include_self=False)
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    socketio.run(app, host="127.0.0.1", port=5000, debug=True)

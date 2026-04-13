@@ -1,31 +1,63 @@
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useEffect, useState, useRef } from "react";
+import axios from "axios";
 import "./Navbar.css";
 
 function Navbar() {
   const navigate = useNavigate();
   const location = useLocation();
+  const dropdownRef = useRef(null);
 
   const [user, setUser] = useState(null);
   const [showMenu, setShowMenu] = useState(false);
-  const dropdownRef = useRef(null);
+  const [unreadCount, setUnreadCount] = useState(0);
 
+  // 🔥 Load user
   useEffect(() => {
     const storedUser = JSON.parse(localStorage.getItem("user"));
     setUser(storedUser);
     setShowMenu(false);
   }, [location]);
 
+  // 🔥 Fetch unread messages
+  useEffect(() => {
+    const fetchUnread = async () => {
+      try {
+        const token = localStorage.getItem("token");
+        if (!token) return;
+
+        const res = await axios.get("http://localhost:5000/api/unread-count", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        setUnreadCount(res.data.unread || 0);
+      } catch (error) {
+        console.error("Unread fetch error:", error);
+      }
+    };
+
+    fetchUnread();
+    const interval = setInterval(fetchUnread, 3000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  // 🔥 Close dropdown on outside click
   useEffect(() => {
     const handleClickOutside = (event) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+      if (!dropdownRef.current) return;
+
+      if (!dropdownRef.current.contains(event.target)) {
         setShowMenu(false);
       }
     };
 
-    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("click", handleClickOutside);
+
     return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("click", handleClickOutside);
     };
   }, []);
 
@@ -36,7 +68,7 @@ function Navbar() {
   };
 
   const getInitial = () => {
-    return user?.name ? user.name.charAt(0).toUpperCase() : "";
+    return user?.name ? user.name.charAt(0).toUpperCase() : "U";
   };
 
   return (
@@ -45,59 +77,79 @@ function Navbar() {
         SkillSync
       </Link>
 
+      {/* 🔥 NAV LINKS */}
       <div className="nav-links">
         <Link to="/" className="nav-link">Home</Link>
-        <Link to="/contact" className="nav-link">Contact</Link>
-        <Link to="/about" className="nav-link">About Us</Link>
-        <Link to="/team" className="nav-link">Team</Link>
-        <Link to="/find-mentor" className="nav-link">Find Mentor</Link>
 
-        {user?.role === "mentor" ? (
-          <Link to="/mentor-dashboard" className="nav-link">
-            Mentor Dashboard
-          </Link>
-        ) : user ? (
-          <>
-            <Link to="/learner-dashboard" className="nav-link">
-              Learner Dashboard
-            </Link>
-            <Link to="/be-mentor" className="nav-link">
-              Become a Mentor
-            </Link>
-          </>
-        ) : null}
+        {/* Matches with badge */}
+        <div className="matches-link-wrapper">
+          <Link to="/matches" className="nav-link">Matches</Link>
+
+          {unreadCount > 0 && (
+            <span className="unread-badge">
+              {unreadCount}
+            </span>
+          )}
+        </div>
+
+        <Link to="/discover" className="nav-link">Discover</Link>
+        <Link to="/profile" className="nav-link">Profile</Link>
+
+        {/* 🔥 YOUR PAGES BACK */}
+        <Link to="/about" className="nav-link">About</Link>
+        <Link to="/contact" className="nav-link">Contact</Link>
+        <Link to="/team" className="nav-link">Team</Link>
       </div>
 
-      <div className="nav-right">
+      {/* 🔥 RIGHT SIDE */}
+      <div className="nav-right" ref={dropdownRef}>
         {user ? (
-          <div className="profile-dropdown-wrapper" ref={dropdownRef}>
+          <div className="profile-dropdown-wrapper">
             <button
               type="button"
-              className="user-avatar avatar-btn"
-              onClick={() => setShowMenu((prev) => !prev)}
+              className="avatar-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowMenu((prev) => !prev);
+              }}
             >
-              {getInitial()}
+              <span className="user-avatar">{getInitial()}</span>
             </button>
 
-            {showMenu && (
-              <div className="dropdown-menu">
-                <p className="dropdown-name">{user.name}</p>
+            {/* 🔥 DROPDOWN */}
+            <div className={`dropdown-menu ${showMenu ? "show" : ""}`}>
+              <p className="dropdown-name">{user.name}</p>
 
-                <button onClick={() => navigate("/")}>Home</button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowMenu(false);
+                  navigate("/profile");
+                }}
+              >
+                My Profile
+              </button>
 
-                {user.role === "mentor" ? (
-                  <button onClick={() => navigate("/mentor-dashboard")}>
-                    Dashboard
-                  </button>
-                ) : (
-                  <button onClick={() => navigate("/learner-dashboard")}>
-                    Dashboard
-                  </button>
-                )}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowMenu(false);
+                  navigate("/matches");
+                }}
+              >
+                Matches
+              </button>
 
-                <button onClick={handleLogout}>Logout</button>
-              </div>
-            )}
+              <button
+                type="button"
+                onClick={() => {
+                  setShowMenu(false);
+                  handleLogout();
+                }}
+              >
+                Logout
+              </button>
+            </div>
           </div>
         ) : (
           <>

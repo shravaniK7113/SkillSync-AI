@@ -1,19 +1,19 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { useEffect } from "react";
-import axios from "axios";
+import api from "./api";
 
 import Home from "./pages/Home";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Profile from "./pages/Profile";
-import BeMentor from "./pages/BeMentor";
-import FindMentor from "./pages/FindMentor";
+import Discover from "./pages/Discover";
+import Matches from "./pages/Matches";
 import Contact from "./pages/Contact";
 import About from "./pages/About";
 import Team from "./pages/Team";
-import MentorRequests from "./pages/MentorRequests";
-import LearnerDashboard from "./pages/LearnerDashboard";
-import MentorDashboard from "./pages/MentorDashboard";
+import Chat from "./pages/Chat";
+
+import ProtectedRoute from "./components/ProtectedRoute";
 
 function App() {
   useEffect(() => {
@@ -23,11 +23,7 @@ function App() {
       if (!token) return;
 
       try {
-        await axios.get("http://localhost:5000/api/profile", {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
+        await api.get("/api/profile");
       } catch (error) {
         localStorage.removeItem("user");
         localStorage.removeItem("token");
@@ -43,15 +39,45 @@ function App() {
         <Route path="/" element={<Home />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
-        <Route path="/profile" element={<Profile />} />
-        <Route path="/be-mentor" element={<BeMentor />} />
-        <Route path="/find-mentor" element={<FindMentor />} />
         <Route path="/contact" element={<Contact />} />
         <Route path="/about" element={<About />} />
         <Route path="/team" element={<Team />} />
-        <Route path="/mentor-requests" element={<MentorRequests />} />
-        <Route path="/learner-dashboard" element={<LearnerDashboard />} />
-        <Route path="/mentor-dashboard" element={<MentorDashboard />} />
+
+        <Route
+          path="/profile"
+          element={
+            <ProtectedRoute>
+              <Profile />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/discover"
+          element={
+            <ProtectedRoute>
+              <Discover />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/matches"
+          element={
+            <ProtectedRoute>
+              <Matches />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/chat/:userId"
+          element={
+            <ProtectedRoute>
+              <Chat />
+            </ProtectedRoute>
+          }
+        />
       </Routes>
     </BrowserRouter>
   );

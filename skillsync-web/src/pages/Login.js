@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
-import axios from "axios";
 import { useNavigate, Link } from "react-router-dom";
+import api from "../api";
+import Toast from "../components/Toast";
 import "./Auth.css";
 
 function Login() {
@@ -10,23 +11,41 @@ function Login() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
 
- useEffect(() => {
-  const user = JSON.parse(localStorage.getItem("user"));
-  if (user) {
-    navigate("/");
-  }
-}, [navigate]);
+  const [toast, setToast] = useState({
+    show: false,
+    message: "",
+    type: "success",
+  });
+
+  useEffect(() => {
+    const user = JSON.parse(localStorage.getItem("user"));
+    if (user) {
+      navigate("/");
+    }
+  }, [navigate]);
+
+  const showToast = (message, type = "success") => {
+    setToast({ show: true, message, type });
+
+    setTimeout(() => {
+      setToast({ show: false, message: "", type: "success" });
+    }, 2500);
+  };
+
+  const isProfileIncomplete = (user) => {
+    return !user?.skills_have?.trim() || !user?.skills_want?.trim();
+  };
 
   const handleLogin = async () => {
     if (!email || !password) {
-      alert("Please enter email and password");
+      showToast("Please enter email and password", "error");
       return;
     }
 
     try {
       setLoading(true);
 
-      const loginRes = await axios.post("http://localhost:5000/api/users/login", {
+      const loginRes = await api.post("/api/users/login", {
         email,
         password,
       });
@@ -34,18 +53,27 @@ function Login() {
       const token = loginRes.data.token;
       localStorage.setItem("token", token);
 
-      const profileRes = await axios.get("http://localhost:5000/api/profile", {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const profileRes = await api.get("/api/profile");
+      const user = profileRes.data.user;
 
-      localStorage.setItem("user", JSON.stringify(profileRes.data.user));
+      localStorage.setItem("user", JSON.stringify(user));
 
-      navigate("/");
+      if (isProfileIncomplete(user)) {
+        showToast("Please complete your profile first", "info");
+
+        setTimeout(() => {
+          navigate("/profile");
+        }, 800);
+      } else {
+        showToast("Login successful", "success");
+
+        setTimeout(() => {
+          navigate("/discover");
+        }, 800);
+      }
     } catch (error) {
       console.error("Login failed:", error.response?.data || error.message);
-      alert(error.response?.data?.message || "Login failed");
+      showToast(error.response?.data?.message || "Login failed", "error");
     } finally {
       setLoading(false);
     }
@@ -53,6 +81,9 @@ function Login() {
 
   return (
     <div className="auth-container">
+      {/* ✅ Toast */}
+      <Toast show={toast.show} message={toast.message} type={toast.type} />
+
       <div className="auth-left">
         <h1>Welcome Back 👋</h1>
       </div>

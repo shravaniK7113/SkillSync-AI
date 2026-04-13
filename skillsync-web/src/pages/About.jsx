@@ -11,11 +11,11 @@ function About() {
         <div className="about-container">
           <div className="about-hero-card">
             <p className="about-label">About SkillSync</p>
-            <h1>Helping learners find the right mentor, faster.</h1>
+            <h1>Helping people exchange skills and grow together.</h1>
             <p className="about-intro">
-              SkillSync is a smart mentorship platform that connects learners with
-              mentors based on skills, interests, and learning goals. It is designed
-              to make mentorship more accessible, relevant, and engaging.
+              SkillSync is a smart skill exchange platform that connects people based
+              on the skills they have and the skills they want to learn. It is designed
+              to make learning more collaborative, practical, and engaging.
             </p>
           </div>
 
@@ -26,11 +26,11 @@ function About() {
             </div>
             <div className="stat-card">
               <h3>100+</h3>
-              <p>Learners Supported</p>
+              <p>Skill Connections</p>
             </div>
             <div className="stat-card">
               <h3>25+</h3>
-              <p>Mentor Profiles</p>
+              <p>Active User Profiles</p>
             </div>
           </div>
 
@@ -39,8 +39,8 @@ function About() {
               <div className="about-icon">🎯</div>
               <h3>Our Mission</h3>
               <p>
-                To make mentorship simple and meaningful by helping learners discover
-                mentors who truly match their goals and growth journey.
+                To make learning simple and meaningful by helping people connect with
+                others who can exchange useful skills and grow together.
               </p>
             </div>
 
@@ -48,9 +48,10 @@ function About() {
               <div className="about-icon">💡</div>
               <h3>Why SkillSync?</h3>
               <p>
-                Many learners struggle to find the right guidance. SkillSync solves
-                this by creating a focused platform where mentors and learners can
-                connect through shared skills and interests.
+                Many people want to learn new skills but do not know where to start or
+                whom to connect with. SkillSync solves this by creating a focused
+                platform where users can discover each other through shared learning
+                interests.
               </p>
             </div>
 
@@ -58,9 +59,9 @@ function About() {
               <div className="about-icon">⚙️</div>
               <h3>How It Works</h3>
               <p>
-                Learners explore mentors, view their skills and profiles, and find
-                the best fit for their learning needs. Mentors can register and share
-                their expertise to support others.
+                Users create a profile, add the skills they have and the skills they
+                want, discover other users, and build meaningful matches for skill
+                exchange and communication.
               </p>
             </div>
 
@@ -68,8 +69,8 @@ function About() {
               <div className="about-icon">✨</div>
               <h3>What Makes It Special</h3>
               <p>
-                SkillSync combines clean design with intelligent matchmaking ideas,
-                making the experience modern, interactive, and easy to use.
+                SkillSync combines clean design, matching logic, chat, and video calling
+                to create a modern and interactive peer-to-peer learning experience.
               </p>
             </div>
           </div>
@@ -81,24 +82,24 @@ function About() {
               <div className="highlight-item">
                 <span>01</span>
                 <div>
-                  <h4>Find mentors by skill</h4>
-                  <p>Search and discover mentors who match your learning interests.</p>
+                  <h4>Discover skill partners</h4>
+                  <p>Explore profiles of people who match your learning interests.</p>
                 </div>
               </div>
 
               <div className="highlight-item">
                 <span>02</span>
                 <div>
-                  <h4>Become a mentor</h4>
-                  <p>Share your knowledge and guide learners on their journey.</p>
+                  <h4>Exchange skills</h4>
+                  <p>Teach what you know and learn what you need from others.</p>
                 </div>
               </div>
 
               <div className="highlight-item">
                 <span>03</span>
                 <div>
-                  <h4>Build meaningful connections</h4>
-                  <p>Create a space where learning happens through mentorship and support.</p>
+                  <h4>Connect and communicate</h4>
+                  <p>Build real learning connections using chat and video calling.</p>
                 </div>
               </div>
             </div>
@@ -108,16 +109,16 @@ function About() {
             <h2>Why this platform matters</h2>
             <p>
               SkillSync is more than just a project — it is built around the idea that
-              the right mentor can change a learner’s direction, confidence, and future.
-              Our goal is to make that connection easier and smarter.
+              learning becomes stronger when people collaborate, share knowledge, and
+              help each other grow in a smarter way.
             </p>
 
             <div className="about-cta-buttons">
-              <Link to="/find-mentor" className="about-btn primary-btn">
-                Find a Mentor
+              <Link to="/discover" className="about-btn primary-btn">
+                Start Discovering
               </Link>
-              <Link to="/be-mentor" className="about-btn secondary-btn">
-                Become a Mentor
+              <Link to="/profile" className="about-btn secondary-btn">
+                Complete Profile
               </Link>
             </div>
           </div>

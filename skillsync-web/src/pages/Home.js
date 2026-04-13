@@ -10,10 +10,10 @@ function Home() {
       <div className="hero">
         <div className="hero-content">
           <h1>SkillSync</h1>
-          <p>Empowering Growth Through Mentorship</p>
+          <p>Exchange skills, connect with others, and grow together.</p>
 
           <Link to="/register" className="btn-start">
-            Start Your Mentorship Journey
+            Start Skill Exchange
           </Link>
         </div>
       </div>
