@@ -1,158 +1,217 @@
-SkillSync README.md
-# SkillSync – AI-Based Mentor-Learner Matching Platform
+# SkillSync – AI-Based Skill Exchange Platform
 
-SkillSync is a full-stack web application that connects learners with mentors based on skills, goals, and preferences.  
-It enables users to find mentors, send connection requests, and build meaningful learning relationships.
+SkillSync is a full-stack web application that enables users to connect with others to **exchange skills** using a matching system similar to swipe-based platforms.
 
-# Features
+Users can discover profiles, match based on mutual interest, and communicate through **real-time chat and video calls**.
 
-- User Authentication (Login/Register)
-- Role-based system (Learner → Mentor)
-- Become a Mentor profile creation
-- Find mentors based on skills
-- Send connection requests
-- Accept / Reject requests (Mentor Dashboard)
-- Learner Dashboard (track request status)
-- Mentor Dashboard (manage requests)
-- AI-based matching (skill + semantic + trust score)
-- Contact reveal after acceptance
-- Modern UI with React
+---
 
-# Tech Stack
+##  Features
+
+# Authentication
+
+* User Registration & Login (JWT-based)
+* Protected routes for secure access
+
+# Skill Matching System
+
+* Discover users based on skills
+* Swipe/interest-based matching system
+* Mutual match required to unlock chat
+
+# Real-Time Chat
+
+* Chat only enabled after match
+* Message notifications
+* Unread message tracking
+
+# Video Calling (WebRTC)
+
+* One-to-one video calling
+* Mic ON/OFF
+* Camera ON/OFF
+* Fullscreen mode
+* Screen sharing
+* Call status indicators
+* Ringtone & call alerts
+
+# Security
+
+* Chat restricted to matched users only
+* Backend validation for all requests
+* Token-based authentication
+
+---
+
+## 🛠 Tech Stack
 
 # Frontend
-- React.js
-- CSS
-- Axios
-- React Router
+
+* React.js
+* CSS
+* Axios
+* React Router
 
 # Backend
-- Python (Flask)
-- MySQL
-- JWT Authentication
+
+* Python (Flask)
+* Flask-SocketIO
+* MySQL
+* JWT Authentication
+
+# Real-Time
+
+* WebRTC (Video Call)
+* Socket.IO (Signaling)
 
 # Tools
-- Git & GitHub
-- Postman (API testing)
 
-# Project Structure
+* Git & GitHub
+* Postman
 
+---
 
+## 📁 Project Structure
+
+```
 SkillSync/
-├── backend-python/ # Flask backend
-│ ├── app.py
+├── backend-python/
+│   ├── app.py
 │
-├── skillsync-web/ # React frontend
-│ ├── src/
-│ │ ├── components/
-│ │ ├── pages/
-│ │ ├── App.js
+├── skillsync-web/
+│   ├── src/
+│   │   ├── components/
+│   │   ├── pages/
+│   │   ├── api.js
+│   │   ├── config.js
+│   │   ├── socket.js
+│   │   └── App.js
 │
 └── README.md
+```
 
-# Getting Started
+---
 
-# Clone the Repository
+## ⚙️ Getting Started
+
+# 1️⃣ Clone Repository
 
 ```bash
 git clone https://github.com/YOUR_USERNAME/SkillSync-AI.git
 cd SkillSync-AI
-🟣 Backend Setup (Flask)
+```
+
+---
+
+## 🟣 Backend Setup (Flask)
+
+```bash
 cd backend-python
 
 python -m venv venv
 venv\Scripts\activate   # Windows
 
-pip install flask flask-cors mysql-connector-python pyjwt bcrypt
+pip install flask flask-cors flask-socketio mysql-connector-python pyjwt bcrypt
 
 python app.py
+```
 
-Backend will run on:
+Backend runs on:
 
+```
 http://localhost:5000
+```
 
-🟣 Frontend Setup (React)
+---
+
+## 🟣 Frontend Setup (React)
+
+```bash
 cd skillsync-web
 
 npm install
 npm start
+```
 
-Frontend will run on:
+Frontend runs on:
 
+```
 http://localhost:3000
+```
 
-🗄️ Database Setup (MySQL)
+---
 
-Create database:
+## 🗄️ Database Setup (MySQL)
 
+### Create Database
+
+```sql
 CREATE DATABASE skillsync;
 USE skillsync;
+```
 
-🧾 Tables Required
-Users Table
+---
+
+### Users Table
+
+```sql
 CREATE TABLE users (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(100),
   email VARCHAR(100) UNIQUE,
-  password TEXT,
-  role VARCHAR(20) DEFAULT 'user'
+  password TEXT
 );
-Mentors Table
-CREATE TABLE mentors (
+```
+
+---
+
+### Matches Table
+
+```sql
+CREATE TABLE matches (
   id INT AUTO_INCREMENT PRIMARY KEY,
-  user_id INT,
-  name VARCHAR(100),
-  email VARCHAR(100),
-  skills TEXT,
-  experience TEXT,
-  bio TEXT,
-  availability TEXT,
-  contact VARCHAR(100),
-  likes INT DEFAULT 0,
-  FOREIGN KEY (user_id) REFERENCES users(id)
-);
-Connection Requests Table
-CREATE TABLE connection_requests (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  learner_id INT,
-  mentor_id INT,
-  status VARCHAR(20) DEFAULT 'pending',
+  user1_id INT,
+  user2_id INT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-Learner Preferences (Optional AI Matching)
-CREATE TABLE learner_preferences (
+```
+
+---
+
+### Messages Table
+
+```sql
+CREATE TABLE messages (
   id INT AUTO_INCREMENT PRIMARY KEY,
-  user_id INT,
-  learning_skills TEXT,
-  goals TEXT,
-  preferred_availability TEXT
+  sender_id INT,
+  receiver_id INT,
+  message_text TEXT,
+  is_read BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+```
 
- # Workflow
- Learner
-Register/Login
-Search mentors
-Send connection request
-Track request in dashboard
-# Mentor
-Become mentor
-Receive requests
-Accept/Reject
-Share contact after acceptance
-🎯 How Matching Works
+## 🔁 Application Flow
 
-SkillSync uses:
+### 👤 User Journey
 
-Skill matching (keyword-based)
-Semantic similarity (text comparison)
-Trust score (ratings, activity)
+1. Register / Login
+2. Discover users
+3. Show interest (swipe/right)
+4. Mutual match created
+5. Chat unlocked
+6. Start video call
 
-Final Score =
 
-50% Skill Match + 30% Semantic + 20% Trust
- Future Enhancements
- Real-time Chat System
- Session Booking
- Mentor Ratings & Reviews
- Video Call Integration
- Notifications
+## 🎥 Video Call Architecture
+
+* WebRTC for peer-to-peer media
+* Socket.IO for signaling
+* STUN server (Google STUN)
+
+## 🔐 Security Features
+
+* JWT authentication
+* Protected routes
+* Match-based chat access control
+* Backend validation for all endpoints
