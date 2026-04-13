@@ -556,6 +556,50 @@ function Chat() {
     setCallStatus("Call ended");
   };
 
+  const toggleMic = () => {
+    const stream = localStreamRef.current;
+    if (!stream) return;
+
+    const audioTracks = stream.getAudioTracks();
+    if (!audioTracks.length) return;
+
+    audioTracks.forEach((track) => {
+      track.enabled = !track.enabled;
+    });
+
+    setIsMicOn(audioTracks[0].enabled);
+  };
+
+  const toggleCamera = () => {
+    const stream = localStreamRef.current;
+    if (!stream) return;
+
+    const videoTracks = stream.getVideoTracks();
+    if (!videoTracks.length) return;
+
+    videoTracks.forEach((track) => {
+      track.enabled = !track.enabled;
+    });
+
+    setIsCameraOn(videoTracks[0].enabled);
+  };
+
+  const toggleFullscreen = async () => {
+    try {
+      if (!document.fullscreenElement) {
+        if (callContainerRef.current) {
+          await callContainerRef.current.requestFullscreen();
+          setIsFullscreen(true);
+        }
+      } else {
+        await document.exitFullscreen();
+        setIsFullscreen(false);
+      }
+    } catch (error) {
+      console.error("Fullscreen error:", error);
+    }
+  };
+
   useEffect(() => {
     const handleFullscreenChange = () => {
       setIsFullscreen(!!document.fullscreenElement);
