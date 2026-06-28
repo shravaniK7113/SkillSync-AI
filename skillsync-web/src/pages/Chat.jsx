@@ -13,6 +13,7 @@ function Chat() {
   const [messageText, setMessageText] = useState("");
   const [otherUser, setOtherUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
   const [newMessageNotice, setNewMessageNotice] = useState("");
   const [accessMessage, setAccessMessage] = useState("");
   const [accessChecked, setAccessChecked] = useState(false);
@@ -28,6 +29,7 @@ function Chat() {
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [callSeconds, setCallSeconds] = useState(0);
   const [remoteStreamAvailable, setRemoteStreamAvailable] = useState(false);
+  const [selectedFile, setSelectedFile] = useState(null);
 
   const token = localStorage.getItem("token");
   const currentUser = JSON.parse(localStorage.getItem("user"));
@@ -63,7 +65,6 @@ function Chat() {
 
   const showBrowserNotification = (title, body) => {
     if (!("Notification" in window)) return;
-
     if (Notification.permission === "granted") {
       new Notification(title, { body });
     }
@@ -88,7 +89,6 @@ function Chat() {
         audioContextRef.current = new AudioContextClass();
       }
     }
-
     return audioContextRef.current;
   };
 
@@ -613,7 +613,7 @@ function Chat() {
   }, []);
 
   useEffect(() => {
-    let interval;
+    let pollInterval;
 
     const handleUserJoined = () => {
       setCallStatus("User is available");
@@ -691,7 +691,7 @@ function Chat() {
         user_name: currentUser?.name || "User",
       });
 
-      interval = setInterval(() => {
+      pollInterval = setInterval(() => {
         fetchMessages();
       }, 2000);
 
@@ -717,9 +717,7 @@ function Chat() {
     initializeChat();
 
     return () => {
-      if (interval) {
-        clearInterval(interval);
-      }
+      if (pollInterval) clearInterval(pollInterval);
 
       document.title = originalTitleRef.current;
 
@@ -773,21 +771,55 @@ function Chat() {
 
     return () => clearTimeout(timeout);
   }, [accessMessage]);
+const handleFileUpload = async (e) => {
+  const file = e.target.files[0];
+
+  if (!file) return;
+
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const uploadRes = await api.post(
+      "/api/upload-chat-file",
+      formData,
+      {
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
+      }
+    );
+
+    await api.post("/api/messages", {
+      receiver_id: userId,
+      message_text: `📎 ${file.name}`,
+      file_url: uploadRes.data.file_url,
+    });
+
+    await fetchMessages();
+
+    alert("File sent successfully");
+  } catch (error) {
+    console.error(error);
+    alert("File upload failed");
+  }
+};
 
   const handleSend = async (e) => {
     e.preventDefault();
 
-    if (!messageText.trim()) return;
-    if (!otherUser) return;
+    if (!messageText.trim() || sending || !otherUser) return;
 
     try {
+      setSending(true);
+
       await api.post("/api/messages", {
         receiver_id: userId,
         message_text: messageText,
       });
 
       setMessageText("");
-      fetchMessages();
+      await fetchMessages();
     } catch (error) {
       console.error("Failed to send message:", error.response?.data || error.message);
 
@@ -797,6 +829,8 @@ function Chat() {
       }
 
       setAccessMessage(error.response?.data?.message || "Failed to send message");
+    } finally {
+      setSending(false);
     }
   };
 
@@ -805,9 +839,10 @@ function Chat() {
       <>
         <Navbar />
         <div className="chat-page">
-          <div className="chat-shell">
-            <div className="chat-messages">
-              <p className="chat-empty">Checking chat access...</p>
+          <div className="chat-container">
+            <div className="chat-empty-state">
+              <h2>Loading chat...</h2>
+              <p>Please wait while we bring your conversation 💖</p>
             </div>
           </div>
         </div>
@@ -854,11 +889,16 @@ function Chat() {
       )}
 
       <div className="chat-page">
-        <div className="chat-shell">
+        <div className="chat-container">
           <div className="chat-header">
-            <div className="chat-header-left">
-              <h2>Chat with {otherUser?.name || "Matched User"}</h2>
-              <p className="chat-status">{callStatus}</p>
+            <div className="chat-user-info">
+              <div className="chat-avatar">
+                {(otherUser?.name || "U").charAt(0).toUpperCase()}
+              </div>
+              <div>
+                <h2>{otherUser?.name || "Chat"}</h2>
+                <p>{callStatus}</p>
+              </div>
             </div>
 
             <div className="chat-header-actions">
@@ -866,26 +906,17 @@ function Chat() {
                 type="button"
                 onClick={startCall}
                 disabled={callStarted || !otherUser}
-                className="chat-btn chat-btn-start"
+                className="chat-top-btn video-btn"
               >
-                Start Video Call
-              </button>
-
-              <button
-                type="button"
-                onClick={endCall}
-                disabled={!showCallUI && !callStarted}
-                className="chat-btn chat-btn-end"
-              >
-                End Call
+                📹 Start Call
               </button>
 
               <button
                 type="button"
                 onClick={() => navigate("/matches")}
-                className="chat-btn chat-btn-back"
+                className="chat-top-btn back-btn"
               >
-                Back to Matches
+                Back
               </button>
             </div>
           </div>
@@ -990,11 +1021,16 @@ function Chat() {
 
           {newMessageNotice && <div className="chat-notice">{newMessageNotice}</div>}
 
-          <div ref={messagesContainerRef} className="chat-messages">
+          <div ref={messagesContainerRef} className="chat-body">
             {loading ? (
-              <p className="chat-empty">Loading messages...</p>
+              <div className="chat-empty-state">
+                <h2>Loading messages...</h2>
+              </div>
             ) : messages.length === 0 ? (
-              <p className="chat-empty">No messages yet. Start the conversation.</p>
+              <div className="chat-empty-state">
+                <h2>No messages yet 💬</h2>
+                <p>Start the conversation and begin your skill exchange.</p>
+              </div>
             ) : (
               messages.map((msg) => {
                 const isMine = Number(msg.sender_id) === Number(currentUser?.id);
@@ -1002,13 +1038,23 @@ function Chat() {
                 return (
                   <div
                     key={msg.id}
-                    className={`chat-message-row ${isMine ? "mine" : "other"}`}
+                    className={`message-row ${isMine ? "mine" : "other"}`}
                   >
-                    <div className={`chat-bubble ${isMine ? "mine" : "other"}`}>
-                      <p className="chat-message-text">{msg.message_text}</p>
-                      <small className="chat-message-time">
-                        {new Date(msg.created_at).toLocaleString()}
-                      </small>
+                    <div className={`message-bubble ${isMine ? "mine" : "other"}`}>
+                      <>
+  <p>{msg.message_text}</p>
+
+  {msg.file_url && (
+    <a
+      href={`http://127.0.0.1:5000${msg.file_url}`}
+      target="_blank"
+      rel="noreferrer"
+    >
+      📥 Download File
+    </a>
+  )}
+</>
+                      <span>{new Date(msg.created_at).toLocaleString()}</span>
                     </div>
                   </div>
                 );
@@ -1016,24 +1062,43 @@ function Chat() {
             )}
           </div>
 
-          <form onSubmit={handleSend} className="chat-form">
-            <input
-              type="text"
-              placeholder="Type a message..."
-              value={messageText}
-              onChange={(e) => setMessageText(e.target.value)}
-              className="chat-input"
-              disabled={!otherUser}
-            />
+          <form onSubmit={handleSend} className="chat-input-area">
 
-            <button
-              type="submit"
-              className="chat-send-btn"
-              disabled={!otherUser || !messageText.trim()}
-            >
-              Send
-            </button>
-          </form>
+  <label
+    style={{
+      cursor: "pointer",
+      fontSize: "22px",
+      padding: "0 10px",
+      display: "flex",
+      alignItems: "center",
+    }}
+  >
+    📎
+
+    <input
+      type="file"
+      style={{ display: "none" }}
+      onChange={handleFileUpload}
+    />
+  </label>
+
+  <input
+    type="text"
+    placeholder="Type a message 💌"
+    value={messageText}
+    onChange={(e) => setMessageText(e.target.value)}
+    disabled={sending}
+  />
+
+  <button
+    type="submit"
+    disabled={sending || !messageText.trim()}
+  >
+    {sending ? "..." : "💖"}
+  </button>
+
+</form>
+          
         </div>
       </div>
     </>

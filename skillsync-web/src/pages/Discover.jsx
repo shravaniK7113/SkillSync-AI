@@ -1,208 +1,193 @@
 import { useEffect, useState } from "react";
-import Navbar from "../components/Navbar";
 import api from "../api";
+import Navbar from "../components/Navbar";
 import "./Discover.css";
 
 function Discover() {
   const [users, setUsers] = useState([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState("");
-  const [toast, setToast] = useState({ show: false, message: "", type: "" });
-  const [cardAction, setCardAction] = useState("");
-  const [showMatchPopup, setShowMatchPopup] = useState(false);
-
-  const token = localStorage.getItem("token");
-
-  const isProfileIncomplete = (user) => {
-    return !user?.skills_have?.trim() || !user?.skills_want?.trim();
-  };
-
-  const showToastMessage = (msg, type = "success") => {
-    setToast({ show: true, message: msg, type });
-
-    setTimeout(() => {
-      setToast({ show: false, message: "", type: "" });
-    }, 2500);
-  };
-
-  const fetchUsers = async () => {
-    try {
-      setLoading(true);
-      setMessage("");
-
-      if (!token) {
-        setMessage("Please login first.");
-        setLoading(false);
-        return;
-      }
-
-      const profileRes = await api.get("/api/profile");
-      const currentUser = profileRes.data.user;
-
-      localStorage.setItem("user", JSON.stringify(currentUser));
-
-      if (isProfileIncomplete(currentUser)) {
-        alert("Please complete your profile first");
-        window.location.href = "/profile";
-        return;
-      }
-
-      const res = await api.get("/api/users/discover");
-
-      setUsers(res.data || []);
-      setCurrentIndex(0);
-
-      if (!res.data || res.data.length === 0) {
-        setMessage("You’ve already viewed all available profiles. Check Matches or come back later.");
-      }
-    } catch (error) {
-      console.error("Failed to fetch discover users:", error.response?.data || error.message);
-      setMessage(error.response?.data?.message || "Error loading users.");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [sentRequests, setSentRequests] = useState([]);
 
   useEffect(() => {
     fetchUsers();
   }, []);
 
-  const goToNextCard = () => {
-    setTimeout(() => {
-      setCurrentIndex((prev) => prev + 1);
-      setCardAction("");
-    }, 300);
-  };
-
-  const handleSwipe = async (action) => {
+  const fetchUsers = async () => {
     try {
-      if (!token) {
-        showToastMessage("Please login first", "error");
-        return;
-      }
+      setLoading(true);
 
-      const currentViewedUser = users[currentIndex];
+      const res = await api.get("/api/users/discover");
 
-      if (!currentViewedUser) return;
-
-      const res = await api.post("/api/swipe", {
-        to_user_id: currentViewedUser.id,
-        action,
-      });
-
-      if (action === "like") {
-        setCardAction("swipe-right");
-
-        if (res.data.matched) {
-          setShowMatchPopup(true);
-          showToastMessage("It’s a match! Check your Matches page.", "success");
-
-          setTimeout(() => {
-            setShowMatchPopup(false);
-          }, 1200);
-        } else {
-          showToastMessage(
-            "Interest saved. You’ll match if they like you back.",
-            "success"
-          );
-        }
-      } else {
-        setCardAction("swipe-left");
-        showToastMessage("Profile skipped", "success");
-      }
-
-      goToNextCard();
-    } catch (error) {
-      console.error("Swipe failed:", error.response?.data || error.message);
-      showToastMessage(error.response?.data?.message || "Action failed", "error");
+      setUsers(res.data || []);
+    } catch (err) {
+      console.error("Error fetching users", err);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const currentViewedUser = users[currentIndex];
+  const sendRequest = async (receiverId) => {
+    try {
+      await api.post("/api/send-request", {
+        receiver_id: receiverId,
+      });
+
+      setSentRequests((prev) => [...prev, receiverId]);
+
+    } catch (err) {
+      console.error(err);
+
+      alert(
+        err.response?.data?.message ||
+          "Failed to send connection request"
+      );
+    }
+  };
 
   return (
-    <div>
+    <>
       <Navbar />
 
-      {toast.show && (
-        <div className={`custom-toast ${toast.type}`}>
-          {toast.message}
-        </div>
-      )}
+      <div className="discover-page">
+        <div className="discover-shell">
+          <div className="discover-top">
+            <span className="discover-badge">
+              ✨ SkillSync Network
+            </span>
 
-      <div className="match-page">
-        <div className="match-container">
-          <div className="match-header">
-            <h2>Discover Skill Exchange Partners</h2>
-            <p>Find people who have the skills you want and want the skills you have.</p>
+            <h1>
+              Find Skilled People & Build Connections 🤝
+            </h1>
+
+            <p>
+              Connect with people, exchange skills,
+              learn together, chat in real-time and
+              grow your professional network.
+            </p>
           </div>
 
-          {showMatchPopup && (
-            <div className="match-popup">
-              <span className="popup-icon">💙</span>
-              <p>It’s a match! View it in Matches.</p>
-            </div>
-          )}
-
           {loading ? (
-            <p className="status-text">Loading users...</p>
-          ) : message ? (
-            <p className="status-text">{message}</p>
-          ) : users.length > 0 ? (
-            currentIndex >= users.length ? (
-              <div className="done-card">
-                <h3>No more users</h3>
-                <p>You have viewed all available profiles. Check your Matches page for mutual connections.</p>
-              </div>
-            ) : (
-              <div className="swipe-card-wrapper">
-                <div className={`mentor-match-card ${cardAction}`}>
-                  <div className="match-badge">
-                    {currentViewedUser.match_score || 0}% Match
-                  </div>
+            <div className="empty-state-card">
+              <h2>Loading users...</h2>
+              <p>Please wait while we find people for you ✨</p>
+            </div>
+          ) : users.length === 0 ? (
+            <div className="empty-state-card">
+              <h2>No users found</h2>
 
-                  <div className="mentor-avatar">
-                    {currentViewedUser.name?.charAt(0).toUpperCase()}
-                  </div>
+              <p>
+                No other users are currently available on
+                SkillSync.
+              </p>
 
-                  <h3>{currentViewedUser.name}</h3>
-                  <p className="mentor-role">Skill Exchange User</p>
-
-                  <div className="mentor-details">
-                    <p><strong>Bio:</strong> {currentViewedUser.bio || "No bio added"}</p>
-                    <p><strong>Skills I Have:</strong> {currentViewedUser.skills_have || "Not added"}</p>
-                    <p><strong>Skills I Want:</strong> {currentViewedUser.skills_want || "Not added"}</p>
-                  </div>
-                </div>
-
-                <div className="action-buttons">
-                  <button
-                    className="circle-btn skip-btn"
-                    onClick={() => handleSwipe("pass")}
-                  >
-                    ✖
-                  </button>
-
-                  <button
-                    className="connect-btn"
-                    onClick={() => handleSwipe("like")}
-                  >
-                    💙 Interested
-                  </button>
-                </div>
-
-                <p className="progress-text">
-                  {currentIndex + 1} / {users.length}
-                </p>
-              </div>
-            )
+              <button
+                className="refresh-btn"
+                onClick={fetchUsers}
+              >
+                Refresh Discover
+              </button>
+            </div>
           ) : (
-            <p className="status-text">No users found.</p>
+            <div className="matches-grid">
+              {users.map((currentUser) => {
+                const skillsHave = currentUser?.skills_have
+                  ? currentUser.skills_have
+                      .split(",")
+                      .map((skill) => skill.trim())
+                      .filter(Boolean)
+                  : [];
+
+                return (
+                  <div
+                    className="user-card"
+                    key={currentUser.id}
+                  >
+                    <div className="user-avatar">
+                      {(currentUser.name || "U")
+                        .charAt(0)
+                        .toUpperCase()}
+                    </div>
+
+                    <div className="card-header">
+                      <div className="card-header-left">
+                        <h2>{currentUser.name}</h2>
+
+                        <p className="mini-text">
+                          Skill Exchange Profile
+                        </p>
+                      </div>
+
+                      <span className="match-score">
+                        {currentUser.match_score || 0}% Match ✨
+                      </span>
+                    </div>
+
+                    <p className="bio">
+                      {currentUser.bio ||
+                        "No bio added yet 🌸"}
+                    </p>
+
+                    <div className="section-block">
+                      <h3>Skills Offered</h3>
+
+                      <div className="skills">
+                        {skillsHave.length > 0 ? (
+                          skillsHave.map((skill, i) => (
+                            <span
+                              key={i}
+                              className="skill-tag"
+                            >
+                              {skill}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="skill-empty">
+                            No skills added
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="section-block">
+                      <h3>Wants To Learn</h3>
+
+                      <p className="wants">
+                        {currentUser.skills_want ||
+                          "No learning goals added yet"}
+                      </p>
+                    </div>
+
+                    <div className="actions">
+                      {sentRequests.includes(
+                        currentUser.id
+                      ) ? (
+                        <button
+                          className="btn like"
+                          disabled
+                        >
+                          ✅ Request Sent
+                        </button>
+                      ) : (
+                        <button
+                          className="btn like"
+                          onClick={() =>
+                            sendRequest(
+                              currentUser.id
+                            )
+                          }
+                        >
+                          🤝 Connect
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
       </div>
-    </div>
+    </>
   );
 }
 

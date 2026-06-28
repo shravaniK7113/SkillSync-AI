@@ -12,10 +12,14 @@ import Contact from "./pages/Contact";
 import About from "./pages/About";
 import Team from "./pages/Team";
 import Chat from "./pages/Chat";
+import Requests from "./pages/Requests";
 
 import ProtectedRoute from "./components/ProtectedRoute";
 
 function App() {
+  // 🔥 Force logout whenever app starts
+
+
   useEffect(() => {
     const checkAuth = async () => {
       const token = localStorage.getItem("token");
@@ -42,6 +46,7 @@ function App() {
         <Route path="/contact" element={<Contact />} />
         <Route path="/about" element={<About />} />
         <Route path="/team" element={<Team />} />
+	<Route path="/requests" element={<Requests />} />
 
         <Route
           path="/profile"

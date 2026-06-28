@@ -1,0 +1,9 @@
+Flask
+Flask-Cors
+Flask-SocketIO
+mysql-connector-python
+PyJWT
+bcrypt
+python-dotenv
+eventlet
+gunicorn

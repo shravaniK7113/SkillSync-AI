@@ -1,121 +1,267 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import Navbar from "../components/Navbar";
 import api from "../api";
+import Navbar from "../components/Navbar";
+import "./Matches.css";
 
 function Matches() {
-  const navigate = useNavigate();
-
   const [matches, setMatches] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [message, setMessage] = useState("");
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [rating, setRating] = useState(5);
+  const [reviewText, setReviewText] = useState("");
+  const [submittingReview, setSubmittingReview] = useState(false);
+  const navigate = useNavigate();
 
   useEffect(() => {
-    const fetchMatches = async () => {
-      try {
-        const token = localStorage.getItem("token");
-
-        if (!token) {
-          setMessage("Please login first.");
-          setLoading(false);
-          return;
-        }
-
-        const res = await api.get("/api/matches");
-
-        setMatches(res.data || []);
-
-        if (!res.data || res.data.length === 0) {
-          setMessage("No matches yet.");
-        } else {
-          setMessage("");
-        }
-      } catch (error) {
-        console.error("Failed to fetch matches:", error.response?.data || error.message);
-        setMessage(error.response?.data?.message || "Error loading matches.");
-      } finally {
-        setLoading(false);
-      }
-    };
-
     fetchMatches();
-    const interval = setInterval(fetchMatches, 3000);
-
-    return () => clearInterval(interval);
   }, []);
+
+const submitReview = async () => {
+  if (!selectedUser) return;
+
+  try {
+    setSubmittingReview(true);
+
+    await api.post("/api/reviews", {
+      reviewed_user_id: selectedUser.id,
+      rating,
+      review_text: reviewText,
+    });
+
+    alert("Review submitted successfully ⭐");
+
+    setSelectedUser(null);
+    setRating(5);
+    setReviewText("");
+  } catch (error) {
+    console.error(error);
+
+    alert(
+      error?.response?.data?.message ||
+      "Failed to submit review"
+    );
+  } finally {
+    setSubmittingReview(false);
+  }
+};
+
+  const fetchMatches = async () => {
+    try {
+      setLoading(true);
+      const res = await api.get("/api/matches");
+      setMatches(res.data || []);
+    } catch (error) {
+      console.error("Failed to fetch matches:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <>
       <Navbar />
 
-      <div style={{ padding: "40px", background: "#f3f7fd", minHeight: "100vh" }}>
-        <h1 style={{ textAlign: "center", marginBottom: "10px" }}>My Matches</h1>
-        <p style={{ textAlign: "center", color: "#666", marginBottom: "30px" }}>
-          People who matched with you for skill exchange.
-        </p>
-
-        {loading ? (
-          <p style={{ textAlign: "center" }}>Loading matches...</p>
-        ) : message ? (
-          <p style={{ textAlign: "center" }}>{message}</p>
-        ) : (
-          <div style={{ maxWidth: "900px", margin: "0 auto" }}>
-            {matches.map((match) => (
-              <div
-                key={match.id}
-                style={{
-                  background: "#fff",
-                  padding: "20px",
-                  borderRadius: "12px",
-                  marginBottom: "20px",
-                  boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
-                  position: "relative",
-                }}
-              >
-                {match.unread_count > 0 && (
-                  <div
-                    style={{
-                      position: "absolute",
-                      top: "15px",
-                      right: "15px",
-                      background: "red",
-                      color: "white",
-                      borderRadius: "50%",
-                      padding: "6px 10px",
-                      fontSize: "12px",
-                      fontWeight: "bold",
-                    }}
-                  >
-                    {match.unread_count}
-                  </div>
-                )}
-
-                <h3>{match.name}</h3>
-                <p><strong>Email:</strong> {match.email}</p>
-                <p><strong>Bio:</strong> {match.bio || "No bio added"}</p>
-                <p><strong>Skills I Have:</strong> {match.skills_have || "Not added"}</p>
-                <p><strong>Skills I Want:</strong> {match.skills_want || "Not added"}</p>
-
-                <button
-                  onClick={() => navigate(`/chat/${match.id}`)}
-                  style={{
-                    marginTop: "12px",
-                    padding: "10px 16px",
-                    border: "none",
-                    borderRadius: "8px",
-                    background: "#2563eb",
-                    color: "#fff",
-                    cursor: "pointer",
-                  }}
-                >
-                  Open Chat
-                </button>
-              </div>
-            ))}
+      <div className="matches-page">
+        <div className="matches-shell">
+          <div className="matches-top">
+            <span className="matches-badge">💞 Your Connections</span>
+            <h1>Your skill matches</h1>
+            <p>
+              These are the people who matched with you. Start chatting and
+              exchange skills together.
+            </p>
           </div>
-        )}
+
+          {loading ? (
+            <div className="matches-empty-card">
+              <h2>Loading matches...</h2>
+              <p>Please wait while we bring your connections ✨</p>
+            </div>
+          ) : matches.length === 0 ? (
+            <div className="matches-empty-card">
+              <h2>No matches yet 💔</h2>
+              <p>
+                Start discovering people and like profiles to create your first
+                skill exchange match.
+              </p>
+              <button
+                className="discover-btn"
+                onClick={() => navigate("/discover")}
+              >
+                Go to Discover
+              </button>
+            </div>
+          ) : (
+            <div className="matches-grid">
+              {matches.map((match) => {
+                const skillsHave = match.skills_have
+                  ? match.skills_have
+                      .split(",")
+                      .map((skill) => skill.trim())
+                      .filter(Boolean)
+                  : [];
+
+                return (
+                  <div key={match.id} className="match-card">
+                    <div className="match-avatar">
+                      {(match.name || "U").charAt(0).toUpperCase()}
+                    </div>
+
+                    <h2>{match.name}</h2>
+                    <p className="match-bio">
+                      {match.bio || "No bio added yet 🌸"}
+                    </p>
+
+                    <div className="match-skills">
+                      {skillsHave.length > 0 ? (
+                        skillsHave.slice(0, 4).map((skill, index) => (
+                          <span key={index} className="match-skill-tag">
+                            {skill}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="match-skill-empty">No skills added</span>
+                      )}
+                    </div>
+
+                    <p className="match-learn">
+                      Wants to learn: {match.skills_want || "Not added yet"}
+                    </p>
+
+                    {Number(match.unread_count) > 0 && (
+                      <div className="unread-pill">
+                        {match.unread_count} new
+                      </div>
+                    )}
+
+                    <div
+  style={{
+    display: "flex",
+    gap: "10px",
+    marginTop: "15px",
+  }}
+>
+  <button
+    className="chat-now-btn"
+    onClick={() => navigate(`/chat/${match.id}`)}
+  >
+    💬 Chat
+  </button>
+
+  <button
+    className="chat-now-btn"
+    style={{
+      background:
+        "linear-gradient(135deg,#f59e0b,#f97316)",
+    }}
+    onClick={() => setSelectedUser(match)}
+  >
+    ⭐ Review
+  </button>
+</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
-    </>
+{selectedUser && (
+  <div
+    style={{
+      position: "fixed",
+      inset: 0,
+      background: "rgba(0,0,0,0.5)",
+      display: "flex",
+      justifyContent: "center",
+      alignItems: "center",
+      zIndex: 9999,
+    }}
+  >
+    <div
+      style={{
+        background: "#fff",
+        padding: "25px",
+        borderRadius: "20px",
+        width: "450px",
+      }}
+    >
+      <h2>Review {selectedUser.name}</h2>
+
+      <select
+        value={rating}
+        onChange={(e) =>
+          setRating(Number(e.target.value))
+        }
+        style={{
+          width: "100%",
+          padding: "12px",
+          marginTop: "15px",
+        }}
+      >
+        <option value={5}>⭐⭐⭐⭐⭐</option>
+        <option value={4}>⭐⭐⭐⭐</option>
+        <option value={3}>⭐⭐⭐</option>
+        <option value={2}>⭐⭐</option>
+        <option value={1}>⭐</option>
+      </select>
+
+      <textarea
+        value={reviewText}
+        onChange={(e) =>
+          setReviewText(e.target.value)
+        }
+        rows={4}
+        placeholder="Write your review..."
+        style={{
+          width: "100%",
+          marginTop: "15px",
+          padding: "12px",
+        }}
+      />
+
+      <div
+        style={{
+          display: "flex",
+          gap: "10px",
+          marginTop: "20px",
+        }}
+      >
+        <button
+          onClick={submitReview}
+          style={{
+            flex: 1,
+            padding: "12px",
+            background: "#7c3aed",
+            color: "#fff",
+            border: "none",
+            borderRadius: "10px",
+          }}
+        >
+          Submit
+        </button>
+
+        <button
+          onClick={() =>
+            setSelectedUser(null)
+          }
+          style={{
+            flex: 1,
+            padding: "12px",
+            background: "#ef4444",
+            color: "#fff",
+            border: "none",
+            borderRadius: "10px",
+          }}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+   </>
   );
 }
 

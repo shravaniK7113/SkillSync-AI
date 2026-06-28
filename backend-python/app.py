@@ -7,6 +7,8 @@ import jwt
 import datetime
 import bcrypt
 from dotenv import load_dotenv
+from werkzeug.utils import secure_filename
+from flask import send_from_directory
 import os
 
 load_dotenv()
@@ -14,9 +16,26 @@ load_dotenv()
 print("SKILLSYNC EXCHANGE BACKEND LOADED")
 
 app = Flask(__name__)
-CORS(app, resources={r"/api/*": {"origins": "http://localhost:3000"}})
-socketio = SocketIO(app, cors_allowed_origins="http://localhost:3000")
 
+UPLOAD_FOLDER = "uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+
+from flask_mail import Mail, Message
+
+app.config["MAIL_SERVER"] = "smtp.gmail.com"
+app.config["MAIL_PORT"] = 587
+app.config["MAIL_USE_TLS"] = True
+app.config["MAIL_USERNAME"] = os.getenv("MAIL_USERNAME")
+app.config["MAIL_PASSWORD"] = os.getenv("MAIL_PASSWORD")
+
+mail = Mail(app)
+
+frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
+CORS(app, resources={r"/api/*": {"origins": frontend_url}})
+socketio = SocketIO(app, cors_allowed_origins=frontend_url)
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY")
 
 
@@ -64,6 +83,39 @@ def get_user_from_token():
     except jwt.InvalidTokenError:
         return None, jsonify({"message": "Invalid token"}), 401
 
+
+
+def create_notification(db, user_id, notif_type, message):
+    cursor = None
+
+    try:
+        cursor = db.cursor()
+
+        print("Creating notification:")
+        print("user_id =", user_id)
+        print("type =", notif_type)
+        print("message =", message)
+
+        cursor.execute(
+            """
+            INSERT INTO notifications (user_id, type, message)
+            VALUES (%s, %s, %s)
+            """,
+            (user_id, notif_type, message)
+        )
+
+        db.commit()
+
+        print("Notification inserted successfully")
+
+    except Exception as e:
+        print("========== NOTIFICATION ERROR ==========")
+        print(str(e))
+        print("========================================")
+
+    finally:
+        if cursor:
+            cursor.close()
 
 # -----------------------------
 # SKILL HELPERS
@@ -371,10 +423,14 @@ def discover_users():
 
         db = get_db_connection()
         if not db:
-            return jsonify({"message": "Failed to discover users", "error": "MySQL connection not available"}), 500
+            return jsonify({
+                "message": "Failed to discover users",
+                "error": "MySQL connection not available"
+            }), 500
 
         cursor = db.cursor(dictionary=True, buffered=True)
 
+        # Get current user
         cursor.execute(
             """
             SELECT id, name, email, bio, skills_have, skills_want
@@ -388,20 +444,20 @@ def discover_users():
         if not current_user:
             return jsonify({"message": "Current user not found"}), 404
 
+        # Get ALL other users (NO swipe filtering)
         cursor.execute(
             """
             SELECT id, name, email, bio, skills_have, skills_want
             FROM users
             WHERE id != %s
-            AND id NOT IN (
-                SELECT to_user_id FROM swipes WHERE from_user_id = %s
-            )
             """,
-            (user_id, user_id)
+            (user_id,)
         )
+
         users = cursor.fetchall()
 
         result = []
+
         for other_user in users:
             match_score = calculate_match_score(
                 current_user.get("skills_have", ""),
@@ -409,6 +465,7 @@ def discover_users():
                 other_user.get("skills_have", ""),
                 other_user.get("skills_want", "")
             )
+
             other_user["match_score"] = match_score
             result.append(other_user)
 
@@ -418,14 +475,16 @@ def discover_users():
 
     except Exception as e:
         print("DISCOVER USERS ERROR:", str(e))
-        return jsonify({"message": "Failed to discover users", "error": str(e)}), 500
+        return jsonify({
+            "message": "Failed to discover users",
+            "error": str(e)
+        }), 500
 
     finally:
         if cursor:
             cursor.close()
         if db and db.is_connected():
             db.close()
-
 
 # -----------------------------
 # SWIPE ROUTE
@@ -434,6 +493,7 @@ def discover_users():
 def swipe_user():
     db = None
     cursor = None
+
     try:
         user_id, error_response, status_code = get_user_from_token()
         if error_response:
@@ -441,7 +501,10 @@ def swipe_user():
 
         db = get_db_connection()
         if not db:
-            return jsonify({"message": "Swipe failed", "error": "MySQL connection not available"}), 500
+            return jsonify({
+                "message": "Swipe failed",
+                "error": "MySQL connection not available"
+            }), 500
 
         data = request.get_json()
         to_user_id = data.get("to_user_id")
@@ -454,34 +517,42 @@ def swipe_user():
             return jsonify({"message": "You cannot swipe on yourself"}), 400
 
         cursor = db.cursor(dictionary=True, buffered=True)
+
         cursor.execute(
             """
-            SELECT id FROM swipes
-            WHERE from_user_id = %s AND to_user_id = %s
+            SELECT id
+            FROM swipes
+            WHERE from_user_id = %s
+            AND to_user_id = %s
             """,
             (user_id, to_user_id)
         )
+
         existing_swipe = cursor.fetchone()
 
         if existing_swipe:
             cursor.close()
-            cursor = None
+
             cursor = db.cursor()
+
             cursor.execute(
                 """
                 UPDATE swipes
                 SET action = %s
-                WHERE from_user_id = %s AND to_user_id = %s
+                WHERE from_user_id = %s
+                AND to_user_id = %s
                 """,
                 (action, user_id, to_user_id)
             )
         else:
             cursor.close()
-            cursor = None
+
             cursor = db.cursor()
+
             cursor.execute(
                 """
-                INSERT INTO swipes (from_user_id, to_user_id, action)
+                INSERT INTO swipes
+                (from_user_id, to_user_id, action)
                 VALUES (%s, %s, %s)
                 """,
                 (user_id, to_user_id, action)
@@ -496,37 +567,43 @@ def swipe_user():
             })
 
         cursor = db.cursor(dictionary=True, buffered=True)
+
         cursor.execute(
             """
-            SELECT id FROM swipes
+            SELECT id
+            FROM swipes
             WHERE from_user_id = %s
             AND to_user_id = %s
             AND action = 'like'
             """,
             (to_user_id, user_id)
         )
+
         reverse_like = cursor.fetchone()
 
         if reverse_like:
+
             user1_id = min(int(user_id), int(to_user_id))
             user2_id = max(int(user_id), int(to_user_id))
 
-            cursor.close()
-            cursor = None
-            cursor = db.cursor(dictionary=True, buffered=True)
             cursor.execute(
                 """
-                SELECT id FROM matches
-                WHERE user1_id = %s AND user2_id = %s
+                SELECT id
+                FROM matches
+                WHERE user1_id = %s
+                AND user2_id = %s
                 """,
                 (user1_id, user2_id)
             )
+
             existing_match = cursor.fetchone()
 
             if not existing_match:
+
                 cursor.close()
-                cursor = None
+
                 cursor = db.cursor()
+
                 cursor.execute(
                     """
                     INSERT INTO matches (user1_id, user2_id)
@@ -534,7 +611,22 @@ def swipe_user():
                     """,
                     (user1_id, user2_id)
                 )
+
                 db.commit()
+
+                create_notification(
+                    db,
+                    user_id,
+                    "match",
+                    f"You matched with user {to_user_id}"
+                )
+
+                create_notification(
+                    db,
+                    to_user_id,
+                    "match",
+                    f"You matched with user {user_id}"
+                )
 
             return jsonify({
                 "matched": True,
@@ -548,11 +640,346 @@ def swipe_user():
 
     except Exception as e:
         print("SWIPE ERROR:", str(e))
-        return jsonify({"message": "Swipe failed", "error": str(e)}), 500
+        return jsonify({
+            "message": "Swipe failed",
+            "error": str(e)
+        }), 500
 
     finally:
         if cursor:
             cursor.close()
+
+        if db and db.is_connected():
+            db.close()
+
+@app.route("/api/send-request", methods=["POST"])
+def send_request():
+
+    db = None
+    cursor = None
+
+    try:
+        user_id, error_response, status_code = get_user_from_token()
+
+        if error_response:
+            return error_response, status_code
+
+        receiver_id = request.json.get("receiver_id")
+
+        db = get_db_connection()
+
+        cursor = db.cursor(dictionary=True)
+
+        cursor.execute(
+            """
+            SELECT *
+            FROM user_connections
+            WHERE sender_id=%s
+            AND receiver_id=%s
+            """,
+            (user_id, receiver_id)
+        )
+
+        existing = cursor.fetchone()
+
+        if existing:
+            return jsonify({"message": "Request already sent"}), 400
+
+        cursor.close()
+
+        cursor = db.cursor()
+
+        cursor.execute(
+            """
+            INSERT INTO user_connections
+            (sender_id, receiver_id, status)
+            VALUES (%s,%s,'pending')
+            """,
+            (user_id, receiver_id)
+        )
+
+        db.commit()
+
+        cursor.close()
+
+        cursor = db.cursor(dictionary=True)
+
+        cursor.execute(
+            """
+            SELECT name
+            FROM users
+            WHERE id=%s
+            """,
+            (user_id,)
+        )
+
+        sender = cursor.fetchone()
+
+        create_notification(
+            db,
+            receiver_id,
+            "connection_request",
+            f"🤝 {sender['name']} sent you a connection request"
+        )
+
+        # EMAIL NOTIFICATION
+
+        cursor.execute(
+            """
+            SELECT email
+            FROM users
+            WHERE id=%s
+            """,
+            (receiver_id,)
+        )
+
+        receiver = cursor.fetchone()
+
+        if receiver and receiver.get("email"):
+            try:
+                msg = Message(
+                    subject="New Connection Request on SkillSync",
+                    sender=os.getenv("MAIL_USERNAME"),
+                    recipients=[receiver["email"]]
+                )
+
+                msg.body = f"""
+Hi,
+
+{sender['name']} has sent you a connection request on SkillSync.
+
+Log in to SkillSync and visit the Requests page to respond.
+
+Regards,
+SkillSync Team
+"""
+
+                mail.send(msg)
+
+            except Exception as mail_error:
+                print("Email Error:", mail_error)
+
+        return jsonify({"message": "Request sent"})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+
+        if db and db.is_connected():
+            db.close()
+@app.route("/api/received-requests", methods=["GET"])
+def received_requests():
+
+    db = None
+    cursor = None
+
+    try:
+        user_id, error_response, status_code = get_user_from_token()
+
+        if error_response:
+            return error_response, status_code
+
+        db = get_db_connection()
+
+        cursor = db.cursor(dictionary=True)
+
+        cursor.execute(
+            """
+            SELECT
+                uc.id,
+                u.id as sender_id,
+                u.name,
+                u.bio,
+                u.skills_have,
+                u.skills_want
+            FROM user_connections uc
+            JOIN users u
+                ON uc.sender_id = u.id
+            WHERE uc.receiver_id=%s
+            AND uc.status='pending'
+            """,
+            (user_id,)
+        )
+
+        return jsonify(cursor.fetchall())
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+
+        if db and db.is_connected():
+            db.close()
+
+@app.route("/api/accept-request", methods=["POST"])
+def accept_request():
+
+    db = None
+    cursor = None
+
+    try:
+        user_id, error_response, status_code = get_user_from_token()
+
+        if error_response:
+            return error_response, status_code
+
+        request_id = request.json.get("request_id")
+
+        db = get_db_connection()
+
+        cursor = db.cursor(dictionary=True)
+
+        cursor.execute(
+            """
+            SELECT *
+            FROM user_connections
+            WHERE id=%s
+            """,
+            (request_id,)
+        )
+
+        req = cursor.fetchone()
+
+        if not req:
+            return jsonify({"message": "Request not found"}), 404
+
+        cursor.close()
+
+        cursor = db.cursor()
+
+        cursor.execute(
+            """
+            UPDATE user_connections
+            SET status='accepted'
+            WHERE id=%s
+            """,
+            (request_id,)
+        )
+
+        user1 = min(req["sender_id"], req["receiver_id"])
+        user2 = max(req["sender_id"], req["receiver_id"])
+
+        cursor.execute(
+            """
+            INSERT INTO matches(user1_id, user2_id)
+            VALUES(%s, %s)
+            """,
+            (user1, user2)
+        )
+
+        db.commit()
+
+        cursor.close()
+
+        cursor = db.cursor(dictionary=True)
+
+        cursor.execute(
+            "SELECT name, email FROM users WHERE id=%s",
+            (req["receiver_id"],)
+        )
+        receiver = cursor.fetchone()
+
+        cursor.execute(
+            "SELECT name, email FROM users WHERE id=%s",
+            (req["sender_id"],)
+        )
+        sender = cursor.fetchone()
+
+        create_notification(
+            db,
+            req["sender_id"],
+            "match",
+            f"🎉 You matched with {receiver['name']}"
+        )
+
+        create_notification(
+            db,
+            req["receiver_id"],
+            "match",
+            f"🎉 You matched with {sender['name']}"
+        )
+
+        # EMAIL TO ORIGINAL REQUEST SENDER
+
+        if sender and sender.get("email"):
+            try:
+                msg = Message(
+                    subject="Your SkillSync Request Was Accepted 🎉",
+                    sender=os.getenv("MAIL_USERNAME"),
+                    recipients=[sender["email"]]
+                )
+
+                msg.body = f"""
+Hi {sender['name']},
+
+Great news!
+
+{receiver['name']} has accepted your connection request on SkillSync.
+
+You can now chat, connect and start exchanging skills.
+
+Regards,
+SkillSync Team
+"""
+
+                mail.send(msg)
+
+            except Exception as mail_error:
+                print("Email Error:", mail_error)
+
+        return jsonify({"message": "Request accepted"})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+
+        if db and db.is_connected():
+            db.close()@app.route("/api/reject-request", methods=["POST"])
+def reject_request():
+
+    db = None
+    cursor = None
+
+    try:
+        user_id, error_response, status_code = get_user_from_token()
+
+        if error_response:
+            return error_response, status_code
+
+        request_id = request.json.get("request_id")
+
+        db = get_db_connection()
+
+        cursor = db.cursor()
+
+        cursor.execute(
+            """
+            UPDATE user_connections
+            SET status='rejected'
+            WHERE id=%s
+            """,
+            (request_id,)
+        )
+
+        db.commit()
+
+        return jsonify({"message":"Request rejected"})
+
+    except Exception as e:
+        return jsonify({"error":str(e)}),500
+
+    finally:
+        if cursor:
+            cursor.close()
+
         if db and db.is_connected():
             db.close()
 
@@ -639,7 +1066,13 @@ def get_messages(other_user_id):
         cursor = db.cursor(dictionary=True, buffered=True)
         cursor.execute(
             """
-            SELECT id, sender_id, receiver_id, message_text, created_at
+            SELECT
+            id,
+            sender_id,
+            receiver_id,
+            message_text,
+            file_url,
+            created_at
             FROM messages
             WHERE (sender_id = %s AND receiver_id = %s)
                OR (sender_id = %s AND receiver_id = %s)
@@ -688,8 +1121,9 @@ def send_message():
         data = request.get_json()
         receiver_id = data.get("receiver_id")
         message_text = data.get("message_text", "").strip()
+        file_url = data.get("file_url")
 
-        if not receiver_id or not message_text:
+        if not receiver_id:
             return jsonify({"message": "receiver_id and message_text are required"}), 400
 
         if int(receiver_id) == int(user_id):
@@ -701,10 +1135,11 @@ def send_message():
         cursor = db.cursor()
         cursor.execute(
             """
-            INSERT INTO messages (sender_id, receiver_id, message_text)
-            VALUES (%s, %s, %s)
+            INSERT INTO messages
+            (sender_id, receiver_id, message_text, file_url)
+            VALUES (%s, %s, %s, %s)
             """,
-            (user_id, receiver_id, message_text)
+            (user_id, receiver_id, message_text, file_url)
         )
         db.commit()
 
@@ -720,6 +1155,48 @@ def send_message():
         if db and db.is_connected():
             db.close()
 
+@app.route("/api/upload-chat-file", methods=["POST"])
+def upload_chat_file():
+    try:
+        user_id, error_response, status_code = get_user_from_token()
+        if error_response:
+            return error_response, status_code
+
+        if "file" not in request.files:
+            return jsonify({"message": "No file selected"}), 400
+
+        file = request.files["file"]
+
+        if file.filename == "":
+            return jsonify({"message": "No file selected"}), 400
+
+        filename = secure_filename(file.filename)
+
+        filepath = os.path.join(
+            app.config["UPLOAD_FOLDER"],
+            filename
+        )
+
+        file.save(filepath)
+
+        return jsonify({
+            "file_url": f"/uploads/{filename}",
+            "file_name": filename
+        }), 200
+
+    except Exception as e:
+        print("UPLOAD FILE ERROR:", str(e))
+        return jsonify({
+            "message": "Upload failed",
+            "error": str(e)
+        }), 500
+
+@app.route("/uploads/<path:filename>")
+def uploaded_file(filename):
+    return send_from_directory(
+        app.config["UPLOAD_FOLDER"],
+        filename
+    )
 
 # -----------------------------
 # CONTACT ROUTE
@@ -830,6 +1307,275 @@ def get_unread_count():
             cursor.close()
         if db and db.is_connected():
             db.close()
+
+@app.route("/api/reviews", methods=["POST"])
+def submit_review():
+    db = None
+    cursor = None
+
+    try:
+        user_id, error_response, status_code = get_user_from_token()
+
+        if error_response:
+            return error_response, status_code
+
+        data = request.get_json()
+
+        reviewed_user_id = data.get("reviewed_user_id")
+        rating = data.get("rating")
+        review_text = data.get("review_text", "").strip()
+
+        if not reviewed_user_id or not rating:
+            return jsonify({
+                "message": "reviewed_user_id and rating are required"
+            }), 400
+
+        db = get_db_connection()
+
+        if not db:
+            return jsonify({
+                "message": "Database connection failed"
+            }), 500
+
+        if not are_users_matched(db, user_id, reviewed_user_id):
+            return jsonify({
+                "message": "You can only review matched users"
+            }), 403
+
+        cursor = db.cursor()
+
+        cursor.execute(
+            """
+            INSERT INTO reviews
+            (reviewer_id, reviewed_user_id, rating, review_text)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (
+                user_id,
+                reviewed_user_id,
+                rating,
+                review_text
+            )
+        )
+
+        db.commit()
+
+        return jsonify({
+            "message": "Review submitted successfully"
+        }), 201
+
+    except Exception as e:
+        print("SUBMIT REVIEW ERROR:", str(e))
+        return jsonify({
+            "message": "Failed to submit review",
+            "error": str(e)
+        }), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+
+        if db and db.is_connected():
+            db.close()
+
+@app.route("/api/reviews/<int:user_id>", methods=["GET"])
+def get_reviews(user_id):
+    db = None
+    cursor = None
+
+    try:
+        db = get_db_connection()
+
+        if not db:
+            return jsonify([])
+
+        cursor = db.cursor(dictionary=True)
+
+        cursor.execute(
+            """
+            SELECT
+                r.id,
+                r.rating,
+                r.review_text,
+                r.created_at,
+                u.name AS reviewer_name
+            FROM reviews r
+            JOIN users u
+                ON r.reviewer_id = u.id
+            WHERE r.reviewed_user_id = %s
+            ORDER BY r.created_at DESC
+            """,
+            (user_id,)
+        )
+
+        reviews = cursor.fetchall()
+
+        return jsonify(reviews)
+
+    except Exception as e:
+        print("GET REVIEWS ERROR:", str(e))
+        return jsonify([])
+
+    finally:
+        if cursor:
+            cursor.close()
+
+        if db and db.is_connected():
+            db.close()
+
+
+@app.route("/api/reviews/<int:user_id>/stats", methods=["GET"])
+def review_stats(user_id):
+    db = None
+    cursor = None
+
+    try:
+        db = get_db_connection()
+
+        if not db:
+            return jsonify({
+                "average_rating": 0,
+                "total_reviews": 0
+            })
+
+        cursor = db.cursor(dictionary=True)
+
+        cursor.execute(
+            """
+            SELECT
+                ROUND(AVG(rating),1) AS average_rating,
+                COUNT(*) AS total_reviews
+            FROM reviews
+            WHERE reviewed_user_id = %s
+            """,
+            (user_id,)
+        )
+
+        stats = cursor.fetchone()
+
+        return jsonify({
+            "average_rating": stats["average_rating"] or 0,
+            "total_reviews": stats["total_reviews"] or 0
+        })
+
+    except Exception as e:
+        print("REVIEW STATS ERROR:", str(e))
+
+        return jsonify({
+            "average_rating": 0,
+            "total_reviews": 0
+        })
+
+    finally:
+        if cursor:
+            cursor.close()
+
+        if db and db.is_connected():
+            db.close()
+
+
+
+
+# -----------------------------
+# NOTIFICATION ROUTES
+# -----------------------------
+@app.route("/api/notifications", methods=["GET"])
+def get_notifications():
+
+    db = None
+    cursor = None
+
+    try:
+        user_id, error_response, status_code = get_user_from_token()
+
+        if error_response:
+            return error_response, status_code
+
+        db = get_db_connection()
+
+        cursor = db.cursor(dictionary=True)
+
+        cursor.execute(
+            """
+            SELECT *
+            FROM notifications
+            WHERE user_id = %s
+            ORDER BY created_at DESC
+            """,
+            (user_id,)
+        )
+
+        notifications = cursor.fetchall()
+
+        return jsonify(notifications)
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+
+        if db and db.is_connected():
+            db.close()
+
+
+@app.route("/api/notifications/read", methods=["POST"])
+def mark_notifications_read():
+
+    db = None
+    cursor = None
+
+    try:
+        user_id, error_response, status_code = get_user_from_token()
+
+        if error_response:
+            return error_response, status_code
+
+        db = get_db_connection()
+
+        cursor = db.cursor()
+
+        cursor.execute(
+            """
+            UPDATE notifications
+            SET is_read = 1
+            WHERE user_id = %s
+            """,
+            (user_id,)
+        )
+
+        db.commit()
+
+        return jsonify({"message": "Notifications marked as read"})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    finally:
+        if cursor:
+            cursor.close()
+
+        if db and db.is_connected():
+            db.close()
+
+@app.route("/api/test-email")
+def test_email():
+    try:
+        msg = Message(
+            subject="SkillSync Email Test",
+            sender=os.getenv("MAIL_USERNAME"),
+            recipients=[os.getenv("MAIL_USERNAME")]
+        )
+
+        msg.body = "Congratulations! SkillSync email notifications are working."
+
+        mail.send(msg)
+
+        return jsonify({"message": "Email sent successfully"})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # -----------------------------
